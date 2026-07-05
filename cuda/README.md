@@ -2,6 +2,10 @@
 
 Torch/CUDA implementation of covariance tuning through differentiable filter replay. A contact-aided right-invariant InEKF is replayed over rollout data in Torch tensors, the covariance parameters are trainable SPD blocks, and training runs truncated BPTT through rollout chunks with a standard Torch optimizer. This is a practical CUDA path for covariance tuning, not the symbolic KKT/Fatrop implementation from the paper.
 
+## Estimator
+
+This CUDA implementation uses the contact-aided invariant EKF estimator from Hartley et al. (2020) on Unitree G1. For estimator details, see “Contact-aided invariant extended Kalman filtering for robot state estimation”: https://doi.org/10.1177/0278364919894385
+
 ## Code Path
 
 - `src/estimation_calibration_cuda/invariant_ekf.py` — right-invariant InEKF replay with dynamic contact insertion/removal, written as a Torch tensor graph so the replay stays differentiable with respect to the process and kinematic measurement covariances. `replay_inekf_torch` runs a full rollout; `start_filter` / `run_rows` / `detach_filter` split the same replay into blocks for truncated BPTT.
