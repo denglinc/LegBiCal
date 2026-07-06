@@ -4,10 +4,6 @@ Reports fwd and fwd+bwd ms/step, rows/s, peak GPU memory, and (with --trace)
 exports a torch.profiler chrome trace plus per-row counts of kernel launches,
 stream synchronizations, and D2H/H2D copies parsed from the trace.
 
-Run inside the legged_opt env from the cuda/ directory:
-
-    PYTHONPATH=src python benchmarks/profile_replay.py --impl dynamic \
-        --rows 200 --chunks 3 --with-grad --trace
 """
 
 from __future__ import annotations
