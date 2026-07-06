@@ -35,15 +35,6 @@ covariance blocks.
 
 ## Environment
 
-Default local reproduction path is the existing miniforge `legged_opt`
-environment:
-
-```bash
-cd /home/dlc/GitHub/LegBiCal/cuda
-/home/dlc/miniforge3/envs/legged_opt/bin/python -c \
-  "import torch; print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)"
-```
-
 `pyproject.toml` also supports uv as a fallback dependency record:
 
 ```bash
