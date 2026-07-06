@@ -18,7 +18,7 @@ This release does not include a learned contact-event network; contact
 schedules come from provided features, and the learned parameters are
 covariance blocks.
 
-## Code Map
+## Map
 
 - `src/estimation_calibration_cuda/invariant_ekf.py`: original dynamic filter,
   kept as the parity oracle and `--exec sequential` reference.
@@ -65,7 +65,7 @@ PYTHONPATH=src /home/dlc/miniforge3/envs/legged_opt/bin/python \
 ```
 
 Defaults are `--exec batched --compile cuda-graph`. Use `--exec sequential`
-for the original dynamic-dimension reference path.
+for the original dynamic-dimension reference path. Replace with your local environment.
 
 ## Test And Profile
 
@@ -76,6 +76,7 @@ PYTHONPATH=src /home/dlc/miniforge3/envs/legged_opt/bin/python \
   benchmarks/profile_replay.py --impl fixed --batch 7 --rows 300 --chunks 10 \
   --with-grad --compile cuda-graph --trace
 ```
+Replace with your local environment.
 
 ## GPU Execution Summary
 
