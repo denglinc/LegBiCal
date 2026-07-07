@@ -82,6 +82,7 @@ class CalibrationConfig:
     require_cuda: bool = True
     exec_mode: str = "batched"
     compile_mode: str | None = None
+    profile_stages: bool = False
 
 
 @dataclass
@@ -931,9 +932,12 @@ def main(argv: list[str] | None = None) -> None:
                             "per-rollout dynamic-dimension loop")
     train.add_argument("--compile", dest="compile_mode", default="cuda-graph",
                        choices=["none", "default", "reduce-overhead",
-                                "max-autotune", "cuda-graph"],
+                                "max-autotune", "cuda-graph",
+                                "cuda-graph-compile"],
                        help="step execution for the batched path; cuda-graph "
-                            "captures each whole chunk fwd+bwd (fastest)")
+                            "captures each whole chunk fwd+bwd; "
+                            "cuda-graph-compile additionally captures the "
+                            "inductor-compiled step (fastest)")
     train.set_defaults(func=_cmd_train)
     args = parser.parse_args(argv)
     args.func(args)

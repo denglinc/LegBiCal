@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import time
+from contextlib import contextmanager
 
 import numpy as np
 import torch
@@ -77,7 +78,8 @@ class ChunkGraph:
 
     def __init__(self, modules, params, batch: fsi.BatchData, *, chunk: int,
                  s_jitter: float, dtype: torch.dtype,
-                 state0: fsi.State | None = None) -> None:
+                 state0: fsi.State | None = None,
+                 step_fn=None) -> None:
         B = batch.B
         device = batch.imu.device
         self.batch = batch
@@ -102,15 +104,17 @@ class ChunkGraph:
         self.nis_term = torch.zeros((), dtype=dtype, device=device)
         self.nis_mean = torch.zeros((), dtype=dtype, device=device)
 
+        step = fsi.step if step_fn is None else step_fn
+
         def fwd_bwd():
             covs, R_kin = build_covs(modules)
             st = fsi.State(self.X, self.theta, self.P, self.jc, self.ic)
             R_l, v_l, nis_l = [], [], []
             for t in range(chunk):
-                st, out = fsi.step(st, self.imu[:, t], self.p_meas[:, t],
-                                   self.dt_row[:, t], self.prop[:, t],
-                                   self.corr[:, t], self.ins[:, t],
-                                   covs, R_kin, s_jitter)
+                st, out = step(st, self.imu[:, t], self.p_meas[:, t],
+                               self.dt_row[:, t], self.prop[:, t],
+                               self.corr[:, t], self.ins[:, t],
+                               covs, R_kin, s_jitter)
                 R_l.append(out.R)
                 v_l.append(out.v)
                 nis_l.append(out.nis)
@@ -140,6 +144,16 @@ class ChunkGraph:
         self.load_inputs(1)
         if state0 is not None:
             self.load_state(state0)  # sane numerics during warmup/capture
+        if step_fn is not None:
+            # warm the _const/_gather caches eagerly: their one-time builders
+            # use data-dependent python that dynamo cannot trace
+            with torch.no_grad():
+                covs_w, R_kin_w = build_covs(modules)
+                fsi.step(fsi.State(self.X, self.theta, self.P, self.jc,
+                                   self.ic),
+                         self.imu[:, 0], self.p_meas[:, 0], self.dt_row[:, 0],
+                         self.prop[:, 0], self.corr[:, 0], self.ins[:, 0],
+                         covs_w, R_kin_w, s_jitter)
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):
@@ -175,6 +189,52 @@ class ChunkGraph:
         self.graph.replay()
 
 
+class _StageTimer:
+    """Per-chunk stage timing for the train loop (config.profile_stages).
+
+    GPU time per stage comes from pre-allocated, reused CUDA event pairs read
+    with a single synchronize at epoch end; CPU time is perf_counter around
+    the same block, which attributes host blocking (the per-chunk grad clip
+    is a sync point and absorbs whatever GPU work is still queued).
+    """
+
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self._free: list[tuple] = []
+        self._used: dict[str, list[tuple]] = {}
+        self._cpu_ms: dict[str, float] = {}
+
+    @contextmanager
+    def stage(self, name: str):
+        if not self.enabled:
+            yield
+            return
+        pair = self._free.pop() if self._free else (
+            torch.cuda.Event(enable_timing=True),
+            torch.cuda.Event(enable_timing=True))
+        pair[0].record()
+        t0 = time.perf_counter()
+        yield
+        self._cpu_ms[name] = (self._cpu_ms.get(name, 0.0)
+                              + 1e3 * (time.perf_counter() - t0))
+        pair[1].record()
+        self._used.setdefault(name, []).append(pair)
+
+    def epoch_summary(self) -> tuple[dict, dict] | None:
+        """One sync; returns (gpu_ms, cpu_ms) per stage and resets."""
+        if not self.enabled:
+            return None
+        torch.cuda.synchronize()
+        gpu = {}
+        for name, pairs in self._used.items():
+            gpu[name] = sum(a.elapsed_time(b) for a, b in pairs)
+            self._free.extend(pairs)
+        cpu = dict(self._cpu_ms)
+        self._used.clear()
+        self._cpu_ms.clear()
+        return gpu, cpu
+
+
 def train_batched(
     rollout_order: list[str],
     rollouts: dict[str, Rollout],
@@ -193,27 +253,32 @@ def train_batched(
     batch = _make_batch(rollout_order, rollouts, chunk=config.chunk,
                         dtype=config.dtype)
     total_train_rows = sum(r.trim1 - r.trim0 - 1 for r in rollouts.values())
-    use_graph = config.compile_mode == "cuda-graph"
+    use_graph = config.compile_mode in ("cuda-graph", "cuda-graph-compile")
     step_fn = None
     if use_graph:
         with torch.no_grad():
             covs0, R_kin0 = build_covs(modules)
             state0 = _seed_states(rollout_order, rollouts, P0_fixed, batch,
                                   R_kin0, device)
+        graph_step = (fsi.make_compiled_step("default")
+                      if config.compile_mode == "cuda-graph-compile" else None)
         try:
             graph = ChunkGraph(modules, params, batch, chunk=config.chunk,
                                s_jitter=config.s_jitter, dtype=config.dtype,
-                               state0=state0)
+                               state0=state0, step_fn=graph_step)
         except RuntimeError as e:
             print(f"cuda-graph capture failed ({e}); falling back to eager")
             use_graph = False
     if not use_graph:
         step_fn = fsi.make_compiled_step(
-            None if config.compile_mode in ("cuda-graph", None) else config.compile_mode)
+            None if config.compile_mode in ("cuda-graph", "cuda-graph-compile",
+                                            None)
+            else config.compile_mode)
 
     history: list[dict] = []
     chunk_trace: list[float] = []
     best = {"loss": float("inf"), "epoch": -1, "state": None}
+    timer = _StageTimer(config.profile_stages)
     t_train = time.time()
     for epoch in range(config.epochs):
         torch.cuda.reset_peak_memory_stats()
@@ -234,51 +299,61 @@ def train_batched(
                                  R_kin, device)
         for a in range(1, batch.T_pad, config.chunk):
             if use_graph:
-                graph.replay_chunk(a)
+                with timer.stage("replay"):
+                    graph.replay_chunk(a)
                 # eigvalsh-based SPD regularization runs outside the graph;
                 # grads add up exactly (linearity)
-                loss_reg, _ = covariance_regularization(
-                    modules, [], [], device=device)
-                optimizer.zero_grad(set_to_none=True)
-                loss_reg.backward()
-                with torch.no_grad():
-                    for p, gbuf in zip(params, graph.grads):
-                        p.grad = (gbuf.clone() if p.grad is None
-                                  else p.grad + gbuf)
-                loss_body = graph.loss_body.clone()
-                loss_reg = loss_reg.detach() + graph.nis_term
-                nis_chunk_means.append(graph.nis_mean.clone())
+                with timer.stage("reg_bwd"):
+                    loss_reg, _ = covariance_regularization(
+                        modules, [], [], device=device)
+                    optimizer.zero_grad(set_to_none=True)
+                    loss_reg.backward()
+                with timer.stage("grad_merge"):
+                    with torch.no_grad():
+                        for p, gbuf in zip(params, graph.grads):
+                            p.grad = (gbuf.clone() if p.grad is None
+                                      else p.grad + gbuf)
+                    loss_body = graph.loss_body.clone()
+                    loss_reg = loss_reg.detach() + graph.nis_term
+                    nis_chunk_means.append(graph.nis_mean.clone())
             else:
-                covs, R_kin = build_covs(modules)
-                state, out = fsi.run_rows_fixed(
-                    state, batch, slice(a, a + config.chunk), covs, R_kin,
-                    s_jitter=config.s_jitter, step_fn=step_fn)
-                v_B = torch.einsum("btji,btj->bti", out["R_WB"], out["v_W"])
-                se = ((v_B - batch.gt_v_B[:, a:a + config.chunk]) ** 2).sum(-1)
-                valid = batch.valid[:, a:a + config.chunk]
-                loss_body = (se * valid).sum() / valid.sum().clamp_min(1)
-                loss_reg, _ = covariance_regularization(
-                    modules, [], [], device=device)
-                loss_reg = loss_reg + LAMBDA["nis"] * fsi.reg_nis_masked(
-                    out["nis"], out["nis_dim"])
-                loss = loss_body + loss_reg
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
+                with timer.stage("forward"):
+                    covs, R_kin = build_covs(modules)
+                    state, out = fsi.run_rows_fixed(
+                        state, batch, slice(a, a + config.chunk), covs, R_kin,
+                        s_jitter=config.s_jitter, step_fn=step_fn)
+                    v_B = torch.einsum("btji,btj->bti", out["R_WB"], out["v_W"])
+                    se = ((v_B - batch.gt_v_B[:, a:a + config.chunk]) ** 2).sum(-1)
+                    valid = batch.valid[:, a:a + config.chunk]
+                    loss_body = (se * valid).sum() / valid.sum().clamp_min(1)
+                    loss_reg, _ = covariance_regularization(
+                        modules, [], [], device=device)
+                    loss_reg = loss_reg + LAMBDA["nis"] * fsi.reg_nis_masked(
+                        out["nis"], out["nis_dim"])
+                    loss = loss_body + loss_reg
+                with timer.stage("backward"):
+                    optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
                 with torch.no_grad():
                     has = out["nis_dim"] > 0
                     if bool(has.any()):
                         per_dim = out["nis"][has] / out["nis_dim"][has]
                         nis_chunk_means.append(per_dim.mean())
                 state = fsi.detach_state(state)
-            with torch.no_grad():
-                for name in GROUP_ORDER:
-                    grad = modules[name].raw_tril.grad
-                    grad_norms[name].append(
-                        grad.norm() if grad is not None
-                        else torch.zeros((), dtype=config.dtype, device=device))
+            with timer.stage("grad_diag"):
+                with torch.no_grad():
+                    for name in GROUP_ORDER:
+                        grad = modules[name].raw_tril.grad
+                        grad_norms[name].append(
+                            grad.norm() if grad is not None
+                            else torch.zeros((), dtype=config.dtype,
+                                             device=device))
             # per-chunk device sync + fail-fast on non-finite grads (as before)
-            torch.nn.utils.clip_grad_norm_(params, 1.0, error_if_nonfinite=True)
-            optimizer.step()
+            with timer.stage("clip"):
+                torch.nn.utils.clip_grad_norm_(params, 1.0,
+                                               error_if_nonfinite=True)
+            with timer.stage("opt_step"):
+                optimizer.step()
             body_losses.append(loss_body.detach())
             reg_losses.append(loss_reg.detach())
         # single epoch-end sync for logging
@@ -305,6 +380,13 @@ def train_batched(
         for name in GROUP_ORDER:
             rec["groups"][name]["grad_norm_mean"] = float(
                 torch.stack(grad_norms[name]).mean())
+        stages = timer.epoch_summary()
+        if stages is not None:
+            rec["stage_ms_gpu"], rec["stage_ms_cpu"] = stages
+            print("  stages gpu_ms: "
+                  + " ".join(f"{k}={v:.0f}" for k, v in stages[0].items())
+                  + " | cpu_ms: "
+                  + " ".join(f"{k}={v:.0f}" for k, v in stages[1].items()))
         history.append(rec)
         if rec["train_body_loss"] < best["loss"]:
             best = {"loss": rec["train_body_loss"], "epoch": epoch,

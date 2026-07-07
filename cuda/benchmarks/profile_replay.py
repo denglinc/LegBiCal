@@ -35,6 +35,11 @@ DATA_ROOT = Path("/home/dlc/projects/Estimation-Calibration/data/datasets_v0")
 DEFAULT_STEM = "dance1_subject1_20260623_173019"
 
 LAUNCH_EVENTS = {"cudaLaunchKernel", "cuLaunchKernel", "cudaLaunchKernelExC"}
+GRAPH_LAUNCH_EVENTS = {"cudaGraphLaunch", "cuGraphLaunch"}
+GRAPH_INSTANTIATE_EVENTS = {
+    "cudaGraphInstantiate", "cudaGraphInstantiateWithFlags",
+    "cuGraphInstantiate", "cuGraphInstantiateWithFlags",
+}
 SYNC_EVENTS = {
     "cudaStreamSynchronize", "cudaDeviceSynchronize", "cudaEventSynchronize",
     "cudaMemcpyAsync",  # counted separately below, kept here for visibility
@@ -156,7 +161,24 @@ class FixedRunner:
         return loss
 
 
-def timed(runner, rows, chunks, with_grad, params) -> dict:
+def _median_stats(wall_times: list[float], rows: int, chunks: int,
+                  batch: int) -> dict:
+    """median/min/max ms_per_step and rows_per_s over repeated timed passes."""
+    n_rows = rows * chunks
+    ms = sorted(1e3 * dt / n_rows for dt in wall_times)
+    med = float(np.median(ms))
+    return {
+        "repeats": len(ms),
+        "ms_per_step": med,
+        "ms_per_step_min": ms[0],
+        "ms_per_step_max": ms[-1],
+        "rows_per_s": 1e3 * batch / med,
+        "batch": batch,
+        "wall_s": sum(wall_times),
+    }
+
+
+def timed(runner, rows, chunks, with_grad, params, repeat: int = 5) -> dict:
     # warmup (also triggers compilation)
     loss = runner.chunk(rows, with_grad)
     if with_grad:
@@ -165,24 +187,21 @@ def timed(runner, rows, chunks, with_grad, params) -> dict:
             p.grad = None
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
-    t0 = time.perf_counter()
-    for _ in range(chunks):
-        loss = runner.chunk(rows, with_grad)
-        if with_grad:
-            loss.backward()
-            for p in params:
-                p.grad = None
-    torch.cuda.synchronize()
-    dt = time.perf_counter() - t0
-    n_rows = rows * chunks
+    wall_times = []
+    for _ in range(repeat):
+        t0 = time.perf_counter()
+        for _ in range(chunks):
+            loss = runner.chunk(rows, with_grad)
+            if with_grad:
+                loss.backward()
+                for p in params:
+                    p.grad = None
+        torch.cuda.synchronize()
+        wall_times.append(time.perf_counter() - t0)
     batch = getattr(getattr(runner, "batch", None), "B", 1)
-    return {
-        "ms_per_step": 1e3 * dt / n_rows,
-        "rows_per_s": n_rows * batch / dt,
-        "batch": batch,
-        "peak_gb": torch.cuda.max_memory_allocated() / 1e9,
-        "wall_s": dt,
-    }
+    result = _median_stats(wall_times, rows, chunks, batch)
+    result["peak_gb"] = torch.cuda.max_memory_allocated() / 1e9
+    return result
 
 
 def profile_trace(runner, rows, with_grad, params, trace_path: Path) -> dict:
@@ -208,9 +227,10 @@ def profile_trace(runner, rows, with_grad, params, trace_path: Path) -> dict:
     return parse_trace(trace_path, rows)
 
 
-def parse_trace(trace_path: Path, rows: int) -> dict:
+def parse_trace(trace_path: Path, rows: int, chunks: int = 1) -> dict:
     events = json.loads(trace_path.read_text()).get("traceEvents", [])
     launches = syncs = d2h = h2d = 0
+    graph_launches = graph_instantiates = kernels = 0
     kernel_time_us = 0.0
     cpu_op_time_us = 0.0
     for e in events:
@@ -218,6 +238,10 @@ def parse_trace(trace_path: Path, rows: int) -> dict:
         cat = e.get("cat", "")
         if name in LAUNCH_EVENTS:
             launches += 1
+        elif name in GRAPH_LAUNCH_EVENTS:
+            graph_launches += 1
+        elif name in GRAPH_INSTANTIATE_EVENTS:
+            graph_instantiates += 1
         elif name in ("cudaStreamSynchronize", "cudaDeviceSynchronize",
                       "cudaEventSynchronize"):
             syncs += 1
@@ -227,6 +251,7 @@ def parse_trace(trace_path: Path, rows: int) -> dict:
             elif "HtoD" in name:
                 h2d += 1
         elif cat == "kernel":
+            kernels += 1
             kernel_time_us += e.get("dur", 0)
         elif cat == "cuda_runtime":
             cpu_op_time_us += e.get("dur", 0)
@@ -234,6 +259,10 @@ def parse_trace(trace_path: Path, rows: int) -> dict:
         "trace": str(trace_path),
         "rows_profiled": rows,
         "launches_per_row": launches / rows,
+        "graph_launches_per_chunk": graph_launches / chunks,
+        "graph_launches_per_row": graph_launches / rows,
+        "graph_instantiates": graph_instantiates,
+        "kernels_per_row": kernels / rows,
         "syncs_total": syncs,
         "d2h_per_row": d2h / rows,
         "h2d_per_row": h2d / rows,
@@ -259,27 +288,28 @@ def run_cuda_graph_bench(args, modules, params, config, P0_fixed, device):
             [seed_state(r, r.trim0, P0_fixed) for r in rolls], device=device)
         state0 = fsi.apply_row0(state0, batch.p_meas[:, 0],
                                 batch.insert_mask[:, 0], R_kin0)
+    step_fn = None
+    if args.compile_mode == "cuda-graph-compile":
+        from estimation_calibration_cuda.fixed_slot_inekf import (
+            make_compiled_step)
+        step_fn = make_compiled_step("default")
     graph = ChunkGraph(modules, params, batch, chunk=args.rows,
                        s_jitter=config.s_jitter, dtype=torch.float64,
-                       state0=state0)
+                       state0=state0, step_fn=step_fn)
     graph.replay_chunk(1)
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
-    t0 = time.perf_counter()
-    for i in range(args.chunks):
-        graph.replay_chunk(1 + (i % 3) * args.rows)
-    torch.cuda.synchronize()
-    dt = time.perf_counter() - t0
-    n_rows = args.rows * args.chunks
-    tag = f"fixed_b{batch.B}_ccuda-graph_float64_grad"
-    result = {
-        "tag": tag, "rows": args.rows, "chunks": args.chunks,
-        "ms_per_step": 1e3 * dt / n_rows,
-        "rows_per_s": n_rows * batch.B / dt,
-        "batch": batch.B,
-        "peak_gb": torch.cuda.max_memory_allocated() / 1e9,
-        "wall_s": dt,
-    }
+    wall_times = []
+    for _ in range(args.repeat):
+        t0 = time.perf_counter()
+        for i in range(args.chunks):
+            graph.replay_chunk(1 + (i % 3) * args.rows)
+        torch.cuda.synchronize()
+        wall_times.append(time.perf_counter() - t0)
+    tag = f"fixed_b{batch.B}_c{args.compile_mode}_float64_grad"
+    result = {"tag": tag, "rows": args.rows, "chunks": args.chunks}
+    result.update(_median_stats(wall_times, args.rows, args.chunks, batch.B))
+    result["peak_gb"] = torch.cuda.max_memory_allocated() / 1e9
     if args.trace:
         from torch.profiler import ProfilerActivity, profile
         with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
@@ -288,7 +318,7 @@ def run_cuda_graph_bench(args, modules, params, config, P0_fixed, device):
         trace_path = args.out / f"{tag}.json"
         trace_path.parent.mkdir(parents=True, exist_ok=True)
         prof.export_chrome_trace(str(trace_path))
-        result.update(parse_trace(trace_path, args.rows))
+        result.update(parse_trace(trace_path, args.rows, chunks=1))
     print(json.dumps(result, indent=2))
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / f"{tag}.summary.json").write_text(json.dumps(result, indent=2))
@@ -299,10 +329,13 @@ def main() -> None:
     ap.add_argument("--impl", choices=["dynamic", "fixed"], default="dynamic")
     ap.add_argument("--compile", dest="compile_mode", default="none",
                     choices=["none", "default", "reduce-overhead",
-                             "max-autotune", "cuda-graph"])
+                             "max-autotune", "cuda-graph",
+                             "cuda-graph-compile"])
     ap.add_argument("--batch", type=int, default=1, help="rollouts in batch (fixed impl)")
     ap.add_argument("--rows", type=int, default=200, help="rows per chunk")
     ap.add_argument("--chunks", type=int, default=3, help="timed chunks")
+    ap.add_argument("--repeat", type=int, default=5,
+                    help="timed passes; ms_per_step is the median")
     ap.add_argument("--with-grad", action="store_true")
     ap.add_argument("--trace", action="store_true", help="export chrome trace")
     ap.add_argument("--dtype", choices=["float64", "float32"], default="float64")
@@ -324,7 +357,7 @@ def main() -> None:
         roll = load_rollout(args.data_root, args.stem, "bench",
                             config=config, device=device)
         runner = DynamicRunner(roll, modules, config, P0_fixed)
-    elif args.compile_mode == "cuda-graph":
+    elif args.compile_mode in ("cuda-graph", "cuda-graph-compile"):
         run_cuda_graph_bench(args, modules, params, config, P0_fixed, device)
         return
     else:
@@ -339,7 +372,8 @@ def main() -> None:
     tag = (f"{args.impl}_b{args.batch}_c{args.compile_mode}_{args.dtype}"
            f"_{'grad' if args.with_grad else 'fwd'}")
     result = {"tag": tag, "rows": args.rows, "chunks": args.chunks}
-    result.update(timed(runner, args.rows, args.chunks, args.with_grad, params))
+    result.update(timed(runner, args.rows, args.chunks, args.with_grad, params,
+                        repeat=args.repeat))
     if args.trace:
         trace_rows = min(args.rows, 100)
         result.update(profile_trace(runner, trace_rows, args.with_grad, params,

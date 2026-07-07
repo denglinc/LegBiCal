@@ -62,20 +62,147 @@ def _const(name: str, dtype, device) -> torch.Tensor:
             t = skew(torch.tensor([0.0, 0.0, -9.81], dtype=dtype, device=device))
         elif name == "g":
             t = torch.tensor([0.0, 0.0, -9.81], dtype=dtype, device=device)
+        elif name == "skew_W":
+            # (3, 9) so that (v @ skew_W).reshape(..., 3, 3) == skew(v)
+            t = torch.zeros(3, 9, dtype=dtype, device=device)
+            t[2, 1], t[1, 2] = -1.0, 1.0
+            t[2, 3], t[0, 5] = 1.0, -1.0
+            t[1, 6], t[0, 7] = -1.0, 1.0
+        elif name == "prop_basis":
+            # (99, 2*39*39): placement basis mapping the batch-dependent
+            # entries vals = [R (9), SR (90)] into A (slot 0) and Adj (slot 1);
+            # consumed via _gather_const as one gather + sign multiply that
+            # replaces every zeros+slice-assign in the A/Adj build
+            t = torch.zeros(99, 2 * DIM_P * DIM_P, dtype=dtype, device=device)
+            eA = lambda r, c: r * DIM_P + c
+            eJ = lambda r, c: DIM_P * DIM_P + r * DIM_P + c
+            for i in range(3):
+                for j in range(3):
+                    v = 3 * i + j                          # R[i, j]
+                    t[v, eA(i, GROUP + j)] = -1.0          # A[0:3, 33:36] = -R
+                    t[v, eA(3 + i, GROUP + 3 + j)] = -1.0  # A[3:6, 36:39] = -R
+                    t[v, eJ(i, j)] = 1.0                   # Adj[0:3, 0:3] = R
+                    for k in range(DIM_X - 3):             # Adj blockdiag(R)
+                        t[v, eJ(3 + 3 * k + i, 3 + 3 * k + j)] = 1.0
+            for k in range(DIM_X - 3):
+                for i in range(3):
+                    for j in range(3):
+                        v = 9 + 9 * k + 3 * i + j          # SR[k][i, j]
+                        t[v, eA(3 + 3 * k + i, GROUP + j)] = -1.0
+                        t[v, eJ(3 + 3 * k + i, j)] = 1.0
+        elif name == "prop_const":
+            # constant parts of (A, Adj) stacked to match prop_basis output
+            t = torch.zeros(2, DIM_P, DIM_P, dtype=dtype, device=device)
+            t[0, 3:6, 0:3] = _const("skew_g", dtype, device)
+            t[0, 6:9, 3:6] = _const("I3", dtype, device)
+            t[1, GROUP:, GROUP:] = torch.eye(6, dtype=dtype, device=device)
+        elif name == "ins_head":
+            t = torch.arange(9, device=device)
+        elif name == "ins_tail":
+            t = torch.arange(GROUP, DIM_P, device=device)
+        elif name == "ins_pair":
+            # (2, 8, 3) long: [0] = position rows 6,7,8 per slot (the insert
+            # source), [1] = each slot's own rows 9..32 (the keep source)
+            t = torch.stack([
+                torch.arange(6, 9, device=device).repeat(N_SLOTS, 1),
+                torch.arange(9, GROUP, device=device).reshape(N_SLOTS, 3)])
+        elif name == "Z39_6":
+            t = torch.zeros(DIM_P, 6, dtype=dtype, device=device)
+        elif name == "corr_basis":
+            # (72, 24*24): placement basis for the 3x3 slot-diagonal
+            # of the innovation covariance S
+            t = torch.zeros(72, DIM_M * DIM_M, dtype=dtype, device=device)
+            for k in range(N_SLOTS):
+                for i in range(3):
+                    for j in range(3):
+                        t[9 * k + 3 * i + j,
+                          (3 * k + i) * DIM_M + 3 * k + j] = 1.0
+        elif name == "ins_basis":
+            # (72, 39*39): placement basis for the masked N_blk
+            # copies on the slot-diagonal 3x3 blocks
+            t = torch.zeros(72, DIM_P * DIM_P, dtype=dtype, device=device)
+            for k in range(N_SLOTS):
+                for i in range(3):
+                    for j in range(3):
+                        t[9 * k + 3 * i + j,
+                          (9 + 3 * k + i) * DIM_P + 9 + 3 * k + j] = 1.0
+        elif name == "qk_basis":
+            # (108, 39*39): placement basis for the block-diagonal Qk
+            # from vals = [Qg, Qa, slot_q (8 blocks), Qbg, Qba]
+            t = torch.zeros(108, DIM_P * DIM_P, dtype=dtype, device=device)
+            starts = [0, 3] + [9 + 3 * k for k in range(N_SLOTS)] \
+                + [GROUP, GROUP + 3]
+            for b, r0 in enumerate(starts):
+                for i in range(3):
+                    for j in range(3):
+                        t[9 * b + 3 * i + j, (r0 + i) * DIM_P + r0 + j] = 1.0
         else:
             raise KeyError(name)
         _CONST_CACHE[key] = t
     return t
 
 
+def _gather_const(prefix: str, dtype, device):
+    """(idx, sign, inv_idx, inv_sign) form of a `<prefix>_basis` placement.
+
+    Forward assembles with index_select + sign multiply; (inv_idx, inv_sign)
+    is the padded inverse map (value k appears at positions inv_idx[k, :])
+    so the backward is gather + mul + sum -- no scatter/atomics and no
+    GEMM: both the (99, 3042) fp64 GEMM (~58 us on GeForce's crippled DGEMM
+    path) and indexing_backward (~100 us deterministic index_put) measured
+    orders of magnitude slower than these ~2 us kernels."""
+    key = (prefix + "_gather", dtype, str(device))
+    t = _CONST_CACHE.get(key)
+    if t is None:
+        basis = _const(prefix + "_basis", dtype, device)
+        idx = basis.abs().argmax(0)
+        sign = basis.gather(0, idx[None]).squeeze(0)
+        idx = torch.where(sign == 0, torch.zeros_like(idx), idx)
+        counts = (basis != 0).sum(1)
+        D = int(counts.max())
+        K = basis.shape[0]
+        inv_idx = torch.zeros(K, D, dtype=torch.long, device=device)
+        inv_sign = torch.zeros(K, D, dtype=dtype, device=device)
+        for k in range(K):
+            pos = (basis[k] != 0).nonzero(as_tuple=True)[0]
+            inv_idx[k, :len(pos)] = pos
+            inv_sign[k, :len(pos)] = basis[k, pos]
+        t = (idx, sign, inv_idx.reshape(-1), inv_sign)
+        _CONST_CACHE[key] = t
+    return t
+
+
+class _AssembleFn(torch.autograd.Function):
+    """out[b, m] = vals[b, idx[m]] * sign[m]; grad via the inverse map."""
+
+    @staticmethod
+    def forward(ctx, vals, idx, sign, inv_idx, inv_sign):
+        ctx.consts = (inv_idx, inv_sign)
+        return torch.index_select(vals, 1, idx) * sign
+
+    @staticmethod
+    def backward(ctx, grad):
+        inv_idx, inv_sign = ctx.consts
+        g = torch.index_select(grad, 1, inv_idx)
+        return (g.reshape(grad.shape[0], *inv_sign.shape) * inv_sign).sum(-1), \
+            None, None, None, None
+
+
+def _assemble(prefix: str, vals: torch.Tensor, *shape: int) -> torch.Tensor:
+    """Scatter batch-dependent entries into a constant layout. Empty
+    positions read vals[:, 0] with sign 0, giving exact +/-0 -- additions
+    of signed zero never change a value, so no-op guarantees survive."""
+    consts = _gather_const(prefix, vals.dtype, vals.device)
+    return _AssembleFn.apply(vals, *consts).reshape(vals.shape[0], *shape)
+
+
 def skew(v: torch.Tensor) -> torch.Tensor:
-    """Batched skew: (..., 3) -> (..., 3, 3). Matches invariant_ekf.skew."""
-    z = torch.zeros_like(v[..., 0])
-    return torch.stack([
-        torch.stack([z, -v[..., 2], v[..., 1]], dim=-1),
-        torch.stack([v[..., 2], z, -v[..., 0]], dim=-1),
-        torch.stack([-v[..., 1], v[..., 0], z], dim=-1),
-    ], dim=-2)
+    """Batched skew: (..., 3) -> (..., 3, 3). Matches invariant_ekf.skew.
+
+    One GEMM against a constant (3, 9) rearrangement instead of eight
+    stacked kernels; each output entry is exactly +/-v_k or 0."""
+    W = _const("skew_W", v.dtype, v.device)
+    return (v @ W).reshape(*v.shape[:-1], 3, 3)
 
 
 def _so3_coefficients(theta: torch.Tensor):
@@ -111,11 +238,9 @@ def exp_sek3(xi: torch.Tensor) -> torch.Tensor:
     A2 = A @ A
     R = I + a[:, None, None] * A + b[:, None, None] * A2
     Jl = I + b[:, None, None] * A + c[:, None, None] * A2
-    X = _const("I13", xi.dtype, xi.device).expand(B, -1, -1).clone()
-    X[:, 0:3, 0:3] = R
     cols = torch.einsum("bij,bsj->bis", Jl, xi[:, 3:].reshape(B, DIM_X - 3, 3))
-    X[:, 0:3, 3:DIM_X] = cols
-    return X
+    bottom = _const("I13", xi.dtype, xi.device)[3:].expand(B, -1, -1)
+    return torch.cat([torch.cat([R, cols], dim=2), bottom], dim=1)
 
 
 def _sym(P: torch.Tensor) -> torch.Tensor:
@@ -239,6 +364,16 @@ def detach_state(state: State) -> State:
 
 
 def _propagate(state: State, gyro, accel, dt_row, prop_mask, covs) -> State:
+    """Propagate with scatter-by-GEMM assembly (tests/test_propagate_block.py
+    holds the zeros+slice-assign dense reference).
+
+    Same formulas as the dense build -- P' = sym(Phi P Phi^T + Qk_hat) with
+    Phi = I + dt A -- but A, Adj and Qk are assembled entry-exactly by one
+    GEMM against constant placement bases instead of zeros + slice
+    assignments, and X' by cat instead of clone + slice assignment. In this
+    kernel-count-bound regime that swaps ~50 CopySlices/SelectBackward
+    launches per step for 2 GEMMs (fwd) + 2 GEMMs (bwd). dt = 0 rows stay
+    bitwise no-ops."""
     X, theta, P = state.X, state.theta, state.P
     B = X.shape[0]
     dtype, device = X.dtype, X.device
@@ -246,6 +381,7 @@ def _propagate(state: State, gyro, accel, dt_row, prop_mask, covs) -> State:
     v_old = X[:, 0:3, 3]
     p_old = X[:, 0:3, 4]
     dt = dt_row[:, None]
+    dtb = dt_row[:, None, None]
 
     w = gyro - theta[:, 0:3]
     a = accel - theta[:, 3:6]
@@ -254,39 +390,34 @@ def _propagate(state: State, gyro, accel, dt_row, prop_mask, covs) -> State:
     v_pred = v_old + acc_w * dt
     p_pred = p_old + v_old * dt + 0.5 * acc_w * dt * dt
 
-    X_new = X.clone()
-    X_new[:, 0:3, 0:3] = R_pred
-    X_new[:, 0:3, 3] = v_pred
-    X_new[:, 0:3, 4] = p_pred
+    X_new = torch.cat([
+        torch.cat([R_pred, v_pred[:, :, None], p_pred[:, :, None],
+                   X[:, 0:3, 5:]], dim=2),
+        X[:, 3:]], dim=1)
 
-    # error-state Jacobian A (mirrors the dynamic build, all slots materialized)
     cols = X[:, 0:3, 3:DIM_X]                        # v, p, slot columns
     SR = skew(cols.transpose(1, 2)) @ R_old[:, None]  # (B, 10, 3, 3)
-    A = torch.zeros(B, DIM_P, DIM_P, dtype=dtype, device=device)
-    A[:, 3:6, 0:3] = _const("skew_g", dtype, device)
-    A[:, 6:9, 3:6] = _const("I3", dtype, device)
-    A[:, 0:3, GROUP:GROUP + 3] = -R_old
-    A[:, 3:6, GROUP + 3:] = -R_old
-    A[:, 3:GROUP, GROUP:GROUP + 3] = -SR.reshape(B, GROUP - 3, 3)
+
+    # A and Adj assembled with one scatter-by-GEMM (entry-exact vs the
+    # zeros+slice-assign build, one-GEMM backward instead of CopySlices)
+    vals = torch.cat([R_old.reshape(B, 9), SR.reshape(B, 90)], dim=1)
+    AB = (_assemble("prop", vals, 2, DIM_P, DIM_P)
+          + _const("prop_const", dtype, device))
+    A, Adj = AB[:, 0], AB[:, 1]
 
     # process noise: Qc only on slots active during this interval
-    Qk = torch.zeros(B, DIM_P, DIM_P, dtype=dtype, device=device)
-    Qk[:, 0:3, 0:3] = covs["Qg"]
-    Qk[:, 3:6, 3:6] = covs["Qa"]
     slot_q = covs["Qc"] * prop_mask.to(dtype)[:, :, None, None]
-    Qk[:, 9:GROUP, 9:GROUP] = _slot_blockdiag(slot_q)
-    Qk[:, GROUP:GROUP + 3, GROUP:GROUP + 3] = covs["Qbg"]
-    Qk[:, GROUP + 3:, GROUP + 3:] = covs["Qba"]
+    vq = torch.cat([covs["Qg"].reshape(1, 9).expand(B, 9),
+                    covs["Qa"].reshape(1, 9).expand(B, 9),
+                    slot_q.reshape(B, 72),
+                    covs["Qbg"].reshape(1, 9).expand(B, 9),
+                    covs["Qba"].reshape(1, 9).expand(B, 9)], dim=1)
+    Qk = _assemble("qk", vq, DIM_P, DIM_P)
 
     I39 = _const("I39", dtype, device)
-    Phi = I39 + A * dt[:, :, None]
-    Adj = I39.expand(B, -1, -1).clone()
-    Adj[:, 0:3, 0:3] = R_old
-    Adj[:, 3:GROUP, 0:3] = SR.reshape(B, GROUP - 3, 3)
-    R_diag = R_old[:, None].expand(B, DIM_X - 3, 3, 3)
-    Adj[:, 3:GROUP, 3:GROUP] = _slot_blockdiag_k(R_diag)
+    Phi = I39 + A * dtb
     PhiAdj = Phi @ Adj
-    Qk_hat = PhiAdj @ Qk @ PhiAdj.transpose(1, 2) * dt[:, :, None]
+    Qk_hat = PhiAdj @ Qk @ PhiAdj.transpose(1, 2) * dtb
     P_new = _sym(Phi @ P @ Phi.transpose(1, 2) + Qk_hat)
     return State(X_new, theta, P_new, state.jitter_count, state.info_count)
 
@@ -302,29 +433,39 @@ def _slot_blockdiag_k(blocks: torch.Tensor) -> torch.Tensor:
 
 def _correct(state: State, p_meas, correct_mask, R_kin,
              s_jitter: float) -> tuple[State, torch.Tensor, torch.Tensor]:
-    """Masked stacked kinematic correction. Returns (state, nis, N_blk) where
+    """Masked stacked kinematic correction, block-structured: H and the dense
+    24x24 gain products are never materialized. Slot m of H is -I at the
+    position error and +I at the slot error, so P H^T and H P H^T are slice
+    differences of P; N is the active-slot 3x3 block diagonal with identity
+    on inactive slots, which decouples them (K's inactive columns are exactly
+    0). Same math as the dense form (tests/test_correct_block.py holds the
+    dense reference). Returns (state, nis, N_blk) where
     N_blk = R_pre R_kin R_pre^T is reused by the insertion stage."""
     X, theta, P = state.X, state.theta, state.P
     B = X.shape[0]
     dtype, device = X.dtype, X.device
     R_pre = X[:, 0:3, 0:3]
     m = correct_mask.to(dtype)                       # (B, 8)
-    mrow = m.repeat_interleave(3, dim=1)             # (B, 24)
 
-    H = _const("H", dtype, device) * mrow[:, :, None]
     N_blk = R_pre @ R_kin @ R_pre.transpose(1, 2)    # (B, 3, 3)
     I3 = _const("I3", dtype, device)
     slot_N = torch.where(correct_mask[:, :, None, None],
                          N_blk[:, None], I3.expand(B, N_SLOTS, 3, 3))
-    N = _slot_blockdiag(slot_N)
 
     # innovation rows 0:3 per slot: R p_bc + p - X[0:3, slot], masked
     Z = (torch.einsum("bik,bsk->bsi", R_pre, p_meas)
          + X[:, 0:3, 4][:, None] - X[:, 0:3, 5:DIM_X].transpose(1, 2))
     Z = (Z * m[:, :, None]).reshape(B, DIM_M)
 
-    PHT = P @ H.transpose(1, 2)                      # (B, 39, 24)
-    S = H @ PHT + N
+    # PHT = P @ H^T: column block j is (P[:, contact_j] - P[:, position]) m_j
+    Pc = P[:, :, 9:9 + DIM_M].reshape(B, DIM_P, N_SLOTS, 3)
+    PHT = ((Pc - P[:, :, 6:9][:, :, None])
+           * m[:, None, :, None]).reshape(B, DIM_P, DIM_M)
+    # S = H @ PHT + N: row block i is (PHT[contact_i] - PHT[position]) m_i
+    Sr = PHT[:, 9:9 + DIM_M].reshape(B, N_SLOTS, 3, DIM_M)
+    S = ((Sr - PHT[:, 6:9][:, None])
+         * m[:, :, None, None]).reshape(B, DIM_M, DIM_M)
+    S = S + _assemble("corr", slot_N.reshape(B, 72), DIM_M, DIM_M)
     jitter_count = state.jitter_count
     if s_jitter > 0.0:
         jitter_count = jitter_count + (
@@ -332,17 +473,28 @@ def _correct(state: State, p_meas, correct_mask, R_kin,
             < 10.0 * s_jitter).to(dtype).detach()
         S = S + s_jitter * _const("I24", dtype, device)
     L, info = torch.linalg.cholesky_ex(S, check_errors=False)
-    K = torch.cholesky_solve(PHT.transpose(1, 2), L).transpose(1, 2)
+    # one solve for both the gain (K = PHT S^{-1}) and the NIS whitening
+    sol = torch.cholesky_solve(
+        torch.cat([PHT.transpose(1, 2), Z[:, :, None]], dim=2), L)
+    K = sol[:, :, :DIM_P].transpose(1, 2)            # (B, 39, 24)
     info_count = state.info_count + (info != 0).to(dtype).detach()
 
     delta = torch.einsum("bij,bj->bi", K, Z)
     dX = exp_sek3(delta[:, :GROUP])
     X_new = dX @ X
     theta_new = theta + delta[:, GROUP:]
-    IKH = _const("I39", dtype, device) - K @ H
-    P_new = _sym(IKH @ P @ IKH.transpose(1, 2)
-                 + K @ N @ K.transpose(1, 2))
-    nis = (Z[:, :, None] * torch.cholesky_solve(Z[:, :, None], L)).sum((1, 2))
+    # K @ H by blocks: K's inactive columns are exactly 0, so no extra mask;
+    # cat (narrow backward) instead of slice assignment (CopySlices backward).
+    # A low-rank Joseph form (KH = C Sel, C = [-sum K_m, K]) was measured at
+    # +7 kernels/step in backward vs this KH cat -- rejected, keep the cat.
+    Kb = K.reshape(B, DIM_P, N_SLOTS, 3)
+    zc = _const("Z39_6", dtype, device).expand(B, -1, -1)
+    KH = torch.cat([zc, -Kb.sum(2), K, zc], dim=2)
+    IKH = _const("I39", dtype, device) - KH
+    M2 = (IKH @ P) @ IKH.transpose(1, 2)
+    KN = torch.einsum("bnjk,bjkl->bnjl", Kb, slot_N).reshape(B, DIM_P, DIM_M)
+    P_new = _sym(M2 + KN @ K.transpose(1, 2))
+    nis = (Z * sol[:, :, DIM_P]).sum(1)
     return State(X_new, theta_new, P_new, jitter_count, info_count), nis, N_blk
 
 
@@ -350,31 +502,37 @@ def _insert(state: State, p_meas, insert_mask, R_pre, N_blk) -> State:
     """Masked slot insertion: PRE-correction R with POST-correction p and P
     (the Hartley augmentation convention). Exact per-slot equivalent of
     sequential F P F^T + G cov G^T, including same-row multi-insert cross
-    terms (row copy -> column copy of row-updated -> masked diagonal add)."""
+    terms. The row copy -> column copy of the row-updated matrix is a
+    batch-dependent source-row permutation, applied as two gathers instead
+    of clone/where chains; the masked diagonal add is one scatter-by-GEMM
+    (tests/test_insert_block.py holds the clone/where reference)."""
     X, P = state.X, state.P
     B = X.shape[0]
-    dtype = X.dtype
+    dtype, device = X.dtype, X.device
     m = insert_mask[:, :, None]                       # (B, 8, 1)
     p_post = X[:, 0:3, 4]
 
     new_cols = p_post[:, None] + torch.einsum("bik,bsk->bsi", R_pre, p_meas)
-    X_new = X.clone()
-    X_new[:, 0:3, 5:DIM_X] = torch.where(
-        m.transpose(1, 2), new_cols.transpose(1, 2), X[:, 0:3, 5:DIM_X])
+    X_new = torch.cat([
+        torch.cat([X[:, 0:3, 0:5],
+                   torch.where(m.transpose(1, 2), new_cols.transpose(1, 2),
+                               X[:, 0:3, 5:DIM_X])], dim=2),
+        X[:, 3:]], dim=1)
 
-    mr = insert_mask[:, :, None, None]                # (B, 8, 1, 1)
-    P1 = P.clone()
-    rows = P[:, 9:GROUP].reshape(B, N_SLOTS, 3, DIM_P)
-    P1[:, 9:GROUP] = torch.where(
-        mr, P[:, 6:9, :][:, None], rows).reshape(B, GROUP - 9, DIM_P)
-    P2 = P1.clone()
-    cols = P1[:, :, 9:GROUP].reshape(B, DIM_P, N_SLOTS, 3)
-    P2[:, :, 9:GROUP] = torch.where(
-        mr.permute(0, 2, 1, 3), P1[:, :, 6:9][:, :, None], cols
-    ).reshape(B, DIM_P, GROUP - 9)
-    add = _slot_blockdiag(N_blk[:, None] * m[:, :, None].to(dtype))
-    P2[:, 9:GROUP, 9:GROUP] = P2[:, 9:GROUP, 9:GROUP] + add
-    return State(X_new, state.theta, _sym(P2),
+    # inserted slot rows/columns read the position band 6:9, everything else
+    # reads itself: one (B, 39) source map, applied along rows then columns
+    pair = _const("ins_pair", torch.long, device)
+    src = torch.cat([
+        _const("ins_head", torch.long, device).expand(B, -1),
+        torch.where(m, pair[0], pair[1]).reshape(B, GROUP - 9),
+        _const("ins_tail", torch.long, device).expand(B, -1)], dim=1)
+    P2 = torch.take_along_dim(
+        torch.take_along_dim(P, src[:, :, None], dim=1),
+        src[:, None, :], dim=2)
+    add = _assemble(
+        "ins", (N_blk[:, None] * m[:, :, None].to(dtype)).reshape(B, 72),
+        DIM_P, DIM_P)
+    return State(X_new, state.theta, _sym(P2 + add),
                  state.jitter_count, state.info_count)
 
 

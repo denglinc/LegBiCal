@@ -30,7 +30,8 @@ def _truncated(roll, rows=1500):
     return dataclasses.replace(roll, trim1=roll.trim0 + rows)
 
 
-@pytest.mark.parametrize("compile_mode", [None, "cuda-graph"])
+@pytest.mark.parametrize("compile_mode",
+                         [None, "cuda-graph", "cuda-graph-compile"])
 def test_train_batched_smoke(roll, device, compile_mode):
     config = CalibrationConfig(epochs=2, chunk=300, compile_mode=compile_mode)
     short = _truncated(roll)
@@ -53,8 +54,12 @@ def test_train_batched_smoke(roll, device, compile_mode):
     assert res["final_P_min_eig"] > -1e-12
 
 
-def test_graph_grads_match_eager(roll, device, config, P0_fixed):
-    """One captured chunk reproduces eager grads (body + NIS part)."""
+@pytest.mark.parametrize("compiled", [False, True])
+def test_graph_grads_match_eager(roll, device, config, P0_fixed, compiled):
+    """One captured chunk reproduces eager grads (body + NIS part).
+
+    The compiled-step capture tolerates inductor's reassociated float ops
+    (fusion changes reduction order); the plain capture must be exact."""
     torch.manual_seed(0)
     modules = make_cov_modules(device=device)
     params = list(modules.parameters())
@@ -66,9 +71,10 @@ def test_graph_grads_match_eager(roll, device, config, P0_fixed):
                                 device=device)
         state0 = fsi.apply_row0(state0, batch.p_meas[:, 0],
                                 batch.insert_mask[:, 0], R_kin0)
+    step_fn = fsi.make_compiled_step("default") if compiled else None
     graph = ChunkGraph(modules, params, batch, chunk=300,
                        s_jitter=config.s_jitter, dtype=torch.float64,
-                       state0=state0)
+                       state0=state0, step_fn=step_fn)
     graph.load_state(state0)
     graph.replay_chunk(1)
     torch.cuda.synchronize()
@@ -88,4 +94,6 @@ def test_graph_grads_match_eager(roll, device, config, P0_fixed):
     eager_grads = torch.autograd.grad(loss, params)
     for gg, eg in zip(graph_grads, eager_grads):
         assert torch.isfinite(gg).all()
-        assert float((gg - eg).abs().max()) <= 1e-12, float((gg - eg).abs().max())
+        d = float((gg - eg).abs().max())
+        tol = 1e-9 * max(1.0, float(eg.abs().max())) if compiled else 1e-12
+        assert d <= tol, (d, tol)
