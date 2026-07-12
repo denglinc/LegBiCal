@@ -37,7 +37,11 @@ def _truncated(roll, rows=1500):
 def test_train_batched_smoke(roll, device, compile_mode):
     config = CalibrationConfig(epochs=2, chunk=300, compile_mode=compile_mode)
     short = _truncated(roll)
-    result = train_batched(["r0"], {"r0": short}, config=config, device=device)
+    validation = dataclasses.replace(short, stem="v0", split_label="validation")
+    result = train_batched(
+        ["r0"], {"r0": dataclasses.replace(short, split_label="train")},
+        validation_order=["v0"], validation_rollouts={"v0": validation},
+        config=config, device=device)
     losses = [h["train_body_loss"] for h in result.history]
     assert all(torch.isfinite(torch.tensor(x)) for x in losses)
     assert losses[-1] < losses[0], losses

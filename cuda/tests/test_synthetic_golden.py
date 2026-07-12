@@ -41,7 +41,10 @@ def _fixed_inputs(data):
         T_pad=total_rows,
         imu=imu[None],
         p_meas=p_meas[None],
+        gt_R_WB=torch.eye(3, dtype=torch.float64).expand(
+            1, total_rows, 3, 3).clone(),
         gt_v_B=torch.zeros(1, total_rows, 3, dtype=torch.float64),
+        gt_p_W=torch.zeros(1, total_rows, 3, dtype=torch.float64),
         dt_row=torch.full((1, total_rows), float(data["dt"]),
                           dtype=torch.float64),
         valid=torch.ones(1, total_rows, dtype=torch.bool),

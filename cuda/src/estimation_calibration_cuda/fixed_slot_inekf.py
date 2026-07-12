@@ -288,7 +288,9 @@ class BatchData:
     T_pad: int
     imu: torch.Tensor           # (B, T, 6)
     p_meas: torch.Tensor        # (B, T, 8, 3)
+    gt_R_WB: torch.Tensor       # (B, T, 3, 3)
     gt_v_B: torch.Tensor        # (B, T, 3)
+    gt_p_W: torch.Tensor        # (B, T, 3)
     dt_row: torch.Tensor        # (B, T)
     valid: torch.Tensor         # (B, T) bool
     prop_mask: torch.Tensor     # (B, T, 8) bool: active during propagate (flags[k-1])
@@ -310,7 +312,9 @@ def build_batch(rolls, *, T_pad: int | None = None,
     B = len(rolls)
     imu = torch.zeros(B, T, 6, dtype=dtype, device=device)
     p_meas = torch.zeros(B, T, N_SLOTS, 3, dtype=dtype, device=device)
+    gt_R_WB = torch.zeros(B, T, 3, 3, dtype=dtype, device=device)
     gt_v_B = torch.zeros(B, T, 3, dtype=dtype, device=device)
+    gt_p_W = torch.zeros(B, T, 3, dtype=dtype, device=device)
     dt_row = torch.zeros(B, T, dtype=dtype, device=device)
     valid = torch.zeros(B, T, dtype=torch.bool, device=device)
     prop = np.zeros((B, T, N_SLOTS), dtype=bool)
@@ -319,7 +323,9 @@ def build_batch(rolls, *, T_pad: int | None = None,
     for b, (r, (t0, L)) in enumerate(zip(rolls, segs)):
         imu[b, :L] = r.imu[t0:t0 + L].to(dtype)
         p_meas[b, :L] = r.p_BC[t0:t0 + L].to(dtype)
+        gt_R_WB[b, :L] = r.gt_R_WB[t0:t0 + L].to(dtype)
         gt_v_B[b, :L] = r.gt_v_B[t0:t0 + L].to(dtype)
+        gt_p_W[b, :L] = r.gt_p_W[t0:t0 + L].to(dtype)
         dt_row[b, 1:L] = float(r.dt)
         valid[b, :L] = True
         flags = np.asarray(r.flags[t0:t0 + L]).astype(bool)
@@ -331,7 +337,8 @@ def build_batch(rolls, *, T_pad: int | None = None,
     to_t = lambda a: torch.as_tensor(a, device=device)
     corr_t = to_t(corr)
     return BatchData(
-        B=B, T_pad=T, imu=imu, p_meas=p_meas, gt_v_B=gt_v_B,
+        B=B, T_pad=T, imu=imu, p_meas=p_meas, gt_R_WB=gt_R_WB,
+        gt_v_B=gt_v_B, gt_p_W=gt_p_W,
         dt_row=dt_row, valid=valid,
         prop_mask=to_t(prop), correct_mask=corr_t, insert_mask=to_t(ins),
         nis_dim=3.0 * corr_t.sum(-1).to(dtype),

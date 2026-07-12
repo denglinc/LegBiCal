@@ -5,10 +5,11 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 import torch
@@ -83,6 +84,7 @@ class CalibrationConfig:
     exec_mode: str = "batched"
     compile_mode: str | None = None
     profile_stages: bool = False
+    seed: int = 0
 
 
 @dataclass
@@ -142,6 +144,29 @@ def assert_cuda_float64(*xs: torch.Tensor) -> None:
         if isinstance(x, torch.Tensor):
             assert x.device.type == "cuda", x.device
             assert x.dtype == torch.float64, x.dtype
+
+
+def seed_everything(seed: int, device: torch.device) -> None:
+    """Seed host and Torch generators without touching global dtype."""
+    if seed < 0:
+        raise ValueError("seed must be nonnegative")
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
+    torch.manual_seed(seed)
+    if device.type == "cuda":
+        with torch.cuda.device(device):
+            torch.cuda.manual_seed_all(seed)
+
+
+def _peak_memory_gb(device: torch.device) -> float:
+    if device.type != "cuda":
+        return 0.0
+    return torch.cuda.max_memory_allocated(device) / 1e9
+
+
+def _reset_peak_memory(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
 # -----------------------------------------------------------------------------
 # covariance model: SPD3 parameterization, one module per noise group
@@ -334,19 +359,19 @@ def load_rollouts(
     *,
     config: CalibrationConfig,
     device: torch.device,
+    splits: tuple[str, ...] = ("train", "validation", "test"),
 ) -> tuple[list[str], dict[str, str], dict[str, Rollout]]:
-    manifest = json.loads((data_root / "dataset_manifest.json").read_text())
-    split_labels: dict[str, str] = {}
-    rollout_order: list[str] = []
-    for entry in manifest:
-        stem = Path(entry["dataset_path"]).stem
-        if (data_root / f"{stem}.npz").exists():
-            split_labels[stem] = entry["split"]
-            rollout_order.append(stem)
-    rollout_order = sorted(rollout_order)
+    """Load only requested splits through the validated data boundary."""
+    from .data import _episode_to_rollout, load_dataset
+    dataset = load_dataset(data_root)
+    episodes = [episode for split in splits for episode in dataset.load(split)]
+    rollout_order = sorted(episode.name for episode in episodes)
+    by_name = {episode.name: episode for episode in episodes}
+    split_labels = {name: by_name[name].split for name in rollout_order}
     rollouts = {
-        stem: load_rollout(data_root, stem, split_labels[stem], config=config, device=device)
-        for stem in rollout_order
+        name: _episode_to_rollout(
+            by_name[name], device=device, dtype=config.dtype, trim_s=config.trim_s)
+        for name in rollout_order
     }
     return rollout_order, split_labels, rollouts
 
@@ -370,6 +395,81 @@ def seed_state(roll: Rollout, row: int, P0_fixed: torch.Tensor) -> tuple[torch.T
 
 # -----------------------------------------------------------------------------
 # replay / eval
+
+
+def trajectory_metrics(
+    R_est: torch.Tensor,
+    v_est: torch.Tensor,
+    p_est: torch.Tensor,
+    gt_R_WB: torch.Tensor,
+    gt_v_B: torch.Tensor,
+    gt_p_W: torch.Tensor,
+    P: torch.Tensor,
+    *,
+    nis: torch.Tensor | None = None,
+    nis_dim: torch.Tensor | None = None,
+    jitter_events: int = 0,
+) -> dict:
+    """Neutral estimator diagnostics with explicit units."""
+    v_B = torch.einsum("tji,tj->ti", R_est, v_est)
+    body_se = ((v_B - gt_v_B) ** 2).sum(-1)
+    position_error = torch.linalg.vector_norm(p_est - gt_p_W, dim=-1)
+    relative = R_est.transpose(-1, -2) @ gt_R_WB
+    cosine = ((torch.diagonal(relative, dim1=-2, dim2=-1).sum(-1) - 1.0) / 2.0)
+    orientation_deg = torch.rad2deg(torch.acos(cosine.clamp(-1.0, 1.0)))
+    P_sym = 0.5 * (P + P.T)
+    corrected = (nis_dim > 0) if nis_dim is not None else None
+    corrected_rows = int(corrected.sum()) if corrected is not None else 0
+    nis_sum = (float((nis[corrected] / nis_dim[corrected]).sum())
+               if corrected_rows else 0.0)
+    rows = R_est.shape[0]
+    return {
+        "body_velocity_rmse_mps": float(torch.sqrt(body_se.mean())),
+        "orientation_mean_deg": float(orientation_deg.mean()),
+        "orientation_max_deg": float(orientation_deg.max()),
+        "position_rmse_m": float(torch.sqrt((position_error ** 2).mean())),
+        "position_final_error_m": float(position_error[-1]),
+        "nis_per_measurement_dim": nis_sum / corrected_rows if corrected_rows else None,
+        "corrected_rows": corrected_rows,
+        "rows": int(rows),
+        "body_velocity_sse": float(body_se.sum()),
+        "position_sse": float((position_error ** 2).sum()),
+        "orientation_sum_deg": float(orientation_deg.sum()),
+        "nis_per_dim_sum": nis_sum,
+        "final_P_sym": float((P - P.T).abs().max()),
+        "final_P_min_eig": float(torch.linalg.eigvalsh(P_sym).min()),
+        "finite": bool(torch.isfinite(R_est).all() and torch.isfinite(v_est).all()
+                       and torch.isfinite(p_est).all() and torch.isfinite(P).all()),
+        "jitter_events": int(jitter_events),
+    }
+
+
+def aggregate_metrics(results: dict[str, dict]) -> dict:
+    if not results:
+        raise ValueError("cannot aggregate an empty evaluation split")
+    values = list(results.values())
+    rows = sum(value["rows"] for value in values)
+    corrected = sum(value["corrected_rows"] for value in values)
+    return {
+        "body_velocity_rmse_mps": float(np.sqrt(
+            sum(value["body_velocity_sse"] for value in values) / rows)),
+        "orientation_mean_deg": (
+            sum(value["orientation_sum_deg"] for value in values) / rows),
+        "orientation_max_deg": max(value["orientation_max_deg"] for value in values),
+        "position_rmse_m": float(np.sqrt(
+            sum(value["position_sse"] for value in values) / rows)),
+        "position_final_error_m": float(np.mean(
+            [value["position_final_error_m"] for value in values])),
+        "nis_per_measurement_dim": (
+            sum(value["nis_per_dim_sum"] for value in values) / corrected
+            if corrected else None),
+        "corrected_rows": corrected,
+        "rows": rows,
+        "final_P_sym": max(value["final_P_sym"] for value in values),
+        "final_P_min_eig": min(value["final_P_min_eig"] for value in values),
+        "finite": all(value["finite"] for value in values),
+        "jitter_events": sum(value["jitter_events"] for value in values),
+    }
 
 
 def eval_replay(
@@ -397,24 +497,20 @@ def eval_replay(
             None,
             None,
             R_kin,
+            collect_nis=True,
             changes_list=roll.changes[s0 + 1:s1],
         )
         R_est = torch.cat([R0[None], out["R_WB"]])
         v_est = torch.cat([v0[None], out["v_W"]])
         p_est = torch.cat([p0[None], out["p_W"]])
-        v_B = torch.einsum("tji,tj->ti", R_est, v_est)
-        se = ((v_B - roll.gt_v_B[s0:s1]) ** 2).sum(-1)
-        P = filt.P
-        P_sym = 0.5 * (P + P.T)
-        result = {
-            "vB_rmse": float(torch.sqrt(se.mean())),
-            "sse": float(se.sum()),
-            "rows": int(s1 - s0),
-            "final_P_sym": float((P - P.T).abs().max()),
-            "final_P_min_eig": float(torch.linalg.eigvalsh(P_sym).min()),
-            "finite": bool(torch.isfinite(filt.X).all() and torch.isfinite(P).all()),
-            "jitter_events": filt.jitter_events,
-        }
+        nis = torch.stack(out["nis_values"]) if out["nis_values"] else None
+        nis_dim = (torch.as_tensor(out["nis_dims"], device=nis.device, dtype=nis.dtype)
+                   if nis is not None else None)
+        result = trajectory_metrics(
+            R_est, v_est, p_est, roll.gt_R_WB[s0:s1], roll.gt_v_B[s0:s1],
+            roll.gt_p_W[s0:s1], filt.P, nis=nis, nis_dim=nis_dim,
+            jitter_events=filt.jitter_events,
+        )
         if return_trajectory:
             result.update({
                 "R_WB": R_est.detach().cpu().numpy(),
@@ -446,20 +542,27 @@ def evaluate_all(
                           s_jitter=s_jitter)
         if not (cal["finite"] and cal["final_P_min_eig"] > -1e-12 and cal["final_P_sym"] < 1e-9):
             raise FloatingPointError(f"final covariance check failed for {stem}")
-        sse_init += init["sse"]
-        sse_cal += cal["sse"]
+        sse_init += init["body_velocity_sse"]
+        sse_cal += cal["body_velocity_sse"]
         rows_total += cal["rows"]
         summary["rollouts"][stem] = {
             "manifest_split_label": roll.split_label,
             "rows": cal["rows"],
-            "vB_rmse_initial": init["vB_rmse"],
-            "vB_rmse_calibrated": cal["vB_rmse"],
+            "body_velocity_rmse_initial_mps": init["body_velocity_rmse_mps"],
+            "body_velocity_rmse_calibrated_mps": cal["body_velocity_rmse_mps"],
+            "orientation_mean_deg": cal["orientation_mean_deg"],
+            "orientation_max_deg": cal["orientation_max_deg"],
+            "position_rmse_m": cal["position_rmse_m"],
+            "position_final_error_m": cal["position_final_error_m"],
+            "nis_per_measurement_dim": cal["nis_per_measurement_dim"],
             "final_P_min_eig": cal["final_P_min_eig"],
             "final_P_sym_residual": cal["final_P_sym"],
             "jitter_events": cal["jitter_events"],
         }
-    summary["aggregate_vB_rmse_initial"] = float(np.sqrt(sse_init / rows_total))
-    summary["aggregate_vB_rmse_calibrated"] = float(np.sqrt(sse_cal / rows_total))
+    summary["aggregate_body_velocity_rmse_initial_mps"] = float(
+        np.sqrt(sse_init / rows_total))
+    summary["aggregate_body_velocity_rmse_calibrated_mps"] = float(
+        np.sqrt(sse_cal / rows_total))
     return summary
 
 # -----------------------------------------------------------------------------
@@ -519,14 +622,55 @@ def covariance_regularization(
 # training: continuous per-rollout replay, chunked BPTT, one Adam step per chunk
 
 
-def train_trimmed_rollouts(
-    rollout_order: list[str],
-    rollouts: dict[str, Rollout],
+def validate_training_splits(
+    train_order: list[str],
+    train_rollouts: dict[str, Rollout],
+    validation_order: list[str],
+    validation_rollouts: dict[str, Rollout],
+) -> None:
+    if not train_order or not validation_order:
+        raise ValueError("calibration requires nonempty train and validation splits")
+    if len(train_order) != len(set(train_order)) or len(validation_order) != len(
+            set(validation_order)):
+        raise ValueError("duplicate episode in calibration split")
+    if set(train_order) & set(validation_order):
+        raise ValueError("train and validation splits overlap")
+    if set(train_order) != set(train_rollouts) or set(validation_order) != set(
+            validation_rollouts):
+        raise ValueError("rollout order does not match split contents")
+
+
+def _validation_metrics_sequential(
+    modules: torch.nn.ModuleDict,
+    validation_order: list[str],
+    validation_rollouts: dict[str, Rollout],
     *,
+    P0_fixed: torch.Tensor,
+    s_jitter: float,
+) -> dict:
+    with torch.no_grad():
+        covs, R_kin = build_covs(modules)
+        results = {
+            name: eval_replay(validation_rollouts[name], covs, R_kin,
+                              P0_fixed=P0_fixed, s_jitter=s_jitter)
+            for name in validation_order
+        }
+    return aggregate_metrics(results)
+
+
+def train_trimmed_rollouts(
+    train_order: list[str],
+    train_rollouts: dict[str, Rollout],
+    *,
+    validation_order: list[str],
+    validation_rollouts: dict[str, Rollout],
     config: CalibrationConfig,
     device: torch.device,
+    validation_callback: Callable[[torch.nn.ModuleDict, int], dict] | None = None,
 ) -> TrainingResult:
-    torch.manual_seed(0)
+    validate_training_splits(train_order, train_rollouts,
+                             validation_order, validation_rollouts)
+    seed_everything(config.seed, device)
     modules = make_cov_modules(device=device, dtype=config.dtype)
     params = list(modules.parameters())
     optimizer = torch.optim.Adam(
@@ -537,22 +681,27 @@ def train_trimmed_rollouts(
     P0_fixed = fixed_initial_covariance(device, config.dtype)
     history: list[dict] = []
     chunk_trace: list[float] = []
-    best = {"loss": float("inf"), "epoch": -1, "state": None}
-    total_train_rows = sum(r.trim1 - r.trim0 - 1 for r in rollouts.values())
+    best = {
+        "validation_body_velocity_rmse_mps": float("inf"),
+        "epoch": -1,
+        "state": None,
+    }
+    total_train_rows = sum(r.trim1 - r.trim0 - 1 for r in train_rollouts.values())
     t_train = time.time()
     for epoch in range(config.epochs):
-        torch.cuda.reset_peak_memory_stats()
+        _reset_peak_memory(device)
         t_epoch = time.time()
         body_losses: list[float] = []
         reg_losses: list[float] = []
         nis_chunk_means: list[torch.Tensor] = []
         grad_norms = {name: [] for name in GROUP_ORDER}
         jitter_events = 0
-        for stem in rollout_order:
-            roll = rollouts[stem]
+        for stem in train_order:
+            roll = train_rollouts[stem]
             covs, R_kin = build_covs(modules)
             X0, theta0, P0 = seed_state(roll, roll.trim0, P0_fixed)
-            assert_cuda_float64(X0, P0, R_kin, *covs.values())
+            if device.type == "cuda":
+                assert_cuda_float64(X0, P0, R_kin, *covs.values())
             filt = start_filter(X0, theta0, P0, covs, roll.flags[roll.trim0],
                                 roll.p_BC[roll.trim0], R_kin,
                                 s_jitter=config.s_jitter)
@@ -605,25 +754,39 @@ def train_trimmed_rollouts(
             "epoch": epoch,
             "train_body_loss": float(np.mean(body_losses)),
             "train_reg_loss": float(np.mean(reg_losses)),
-            "nis_per_dim_mean": float(torch.stack(nis_chunk_means).mean()),
+            "nis_per_dim_mean": (float(torch.stack(nis_chunk_means).mean())
+                                 if nis_chunk_means else None),
             "jitter_events": jitter_events,
-            "peak_gb": torch.cuda.max_memory_allocated() / 1e9,
+            "peak_gb": _peak_memory_gb(device),
             "epoch_s": time.time() - t_epoch,
             "rows_per_s": total_train_rows / max(time.time() - t_epoch, 1e-12),
             "groups": modules.summary(),
         }
         for name in GROUP_ORDER:
             rec["groups"][name]["grad_norm_mean"] = float(torch.stack(grad_norms[name]).mean())
+        with torch.no_grad():
+            validation = (validation_callback(modules, epoch)
+                          if validation_callback is not None
+                          else _validation_metrics_sequential(
+                              modules, validation_order, validation_rollouts,
+                              P0_fixed=P0_fixed, s_jitter=config.s_jitter))
+        metric = float(validation["body_velocity_rmse_mps"])
+        if not np.isfinite(metric):
+            raise FloatingPointError(f"non-finite validation metric at epoch {epoch}")
+        rec["validation"] = validation
         history.append(rec)
-        if rec["train_body_loss"] < best["loss"]:
+        if metric < best["validation_body_velocity_rmse_mps"]:
             best = {
-                "loss": rec["train_body_loss"],
+                "validation_body_velocity_rmse_mps": metric,
                 "epoch": epoch,
                 "state": copy.deepcopy(modules.state_dict()),
             }
+        nis_text = (f"{rec['nis_per_dim_mean']:.3f}"
+                    if rec["nis_per_dim_mean"] is not None else "n/a")
         print(
             f"epoch {epoch:2d}: body {rec['train_body_loss']:.4f} "
-            f"reg {rec['train_reg_loss']:.5f} | NIS/dim {rec['nis_per_dim_mean']:.3f} "
+            f"reg {rec['train_reg_loss']:.5f} | val {metric:.4f} m/s "
+            f"| NIS/dim {nis_text} "
             f"| {rec['epoch_s']:.0f}s ({rec['rows_per_s']:.0f} rows/s) "
             f"| peak {rec['peak_gb']:.2f} GB"
         )
@@ -653,10 +816,14 @@ def run_meta(
     result: TrainingResult,
     device_name: str,
 ) -> dict:
+    train_names = [name for name in rollout_order if split_labels[name] == "train"]
+    validation_names = [name for name in rollout_order
+                        if split_labels[name] == "validation"]
     return {
         "mode": "trimmed_calibration",
         "trim_s": config.trim_s,
-        "train_rollouts": rollout_order,
+        "train_rollouts": train_names,
+        "validation_rollouts": validation_names,
         "manifest_split_labels": split_labels,
         "total_trained_rows_per_epoch": total_rows,
         "chunk_size": config.chunk,
@@ -664,9 +831,10 @@ def run_meta(
         "lr": result.lr,
         "bias_lr_factor": config.bias_lr_factor,
         "selected_epoch": result.best["epoch"],
-        "selected_train_body_loss": result.best["loss"],
+        "selected_validation_body_velocity_rmse_mps": result.best[
+            "validation_body_velocity_rmse_mps"],
         "train_runtime_s": result.runtime_s,
-        "cuda_peak_gb": max(h["peak_gb"] for h in result.history),
+        "peak_memory_gb": max(h["peak_gb"] for h in result.history),
         "device": device_name,
     }
 
@@ -684,7 +852,9 @@ def save_training_outputs(
     device_name: str,
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
-    total_rows = sum(r.trim1 - r.trim0 - 1 for r in rollouts.values())
+    total_rows = sum(
+        rollouts[name].trim1 - rollouts[name].trim0 - 1
+        for name in rollout_order if split_labels[name] == "train")
     meta = run_meta(
         config=config,
         rollout_order=rollout_order,
@@ -838,10 +1008,15 @@ def _cmd_train(args: argparse.Namespace) -> None:
         compile_mode=None if args.compile_mode == "none" else args.compile_mode,
     )
     device = make_device(config.require_cuda)
-    torch.set_default_dtype(config.dtype)
     data_root = Path(args.data_root)
     out_dir = Path(args.outputs)
-    rollout_order, split_labels, rollouts = load_rollouts(data_root, config=config, device=device)
+    rollout_order, split_labels, rollouts = load_rollouts(
+        data_root, config=config, device=device, splits=("train", "validation"))
+    train_order = [name for name in rollout_order if split_labels[name] == "train"]
+    validation_order = [name for name in rollout_order
+                        if split_labels[name] == "validation"]
+    train_rollouts = {name: rollouts[name] for name in train_order}
+    validation_rollouts = {name: rollouts[name] for name in validation_order}
     modules0 = make_cov_modules(device=device, dtype=config.dtype)
     with torch.no_grad():
         covs0, Rk0 = build_covs(modules0)
@@ -849,10 +1024,19 @@ def _cmd_train(args: argparse.Namespace) -> None:
         Rk0 = Rk0.detach().clone()
     if config.exec_mode == "batched":
         from .batched_calibration import train_batched
-        result = train_batched(rollout_order, rollouts, config=config, device=device)
+        result = train_batched(
+            train_order, train_rollouts,
+            validation_order=validation_order,
+            validation_rollouts=validation_rollouts,
+            config=config, device=device)
     else:
-        result = train_trimmed_rollouts(rollout_order, rollouts, config=config, device=device)
-    device_name = torch.cuda.get_device_name(0)
+        result = train_trimmed_rollouts(
+            train_order, train_rollouts,
+            validation_order=validation_order,
+            validation_rollouts=validation_rollouts,
+            config=config, device=device)
+    device_name = (torch.cuda.get_device_name(device)
+                   if device.type == "cuda" else "CPU")
     save_training_outputs(
         out_dir,
         config=config,
@@ -883,12 +1067,15 @@ def _cmd_train(args: argparse.Namespace) -> None:
     )
     meta = json.loads((out_dir / "full_spd_training_log.json").read_text())
     gates = {
-        "cuda_mandatory": True,
-        "all_tensors_cuda_float64": True,
-        "all_rollouts_trained": len(rollout_order) == 7,
-        "loss_decreases": result.best["loss"] < result.history[0]["train_body_loss"],
-        "grads_finite_nonzero": True,
-        "clip_grad_norm_finite": True,
+        "effective_device": str(device),
+        "train_episodes": len(train_order),
+        "validation_episodes": len(validation_order),
+        "model_float64_on_effective_device": all(
+            parameter.dtype == torch.float64 and parameter.device == device
+            for parameter in result.modules.parameters()),
+        "grad_diagnostics_finite": all(
+            np.isfinite(record["groups"][name]["grad_norm_mean"])
+            for record in result.history for name in GROUP_ORDER),
         "eigenvalues_above_floor": all(
             min(result.history[result.best["epoch"]]["groups"][name]["eigs"]) > FLOOR[name]
             for name in GROUP_ORDER
@@ -898,7 +1085,10 @@ def _cmd_train(args: argparse.Namespace) -> None:
             for name in GROUP_ORDER
         ),
         "nis_per_dim_at_selection": result.history[result.best["epoch"]]["nis_per_dim_mean"],
-        "final_P_finite_sym_psd_all_rollouts": True,
+        "final_covariance_valid": all(
+            item["final_P_min_eig"] > -1e-12
+            and item["final_P_sym_residual"] < 1e-9
+            for item in evaluation["rollouts"].values()),
         "peak_gb_max": max(h["peak_gb"] for h in result.history),
     }
     (out_dir / "full_spd_eval_summary.json").write_text(json.dumps({
