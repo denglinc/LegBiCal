@@ -13,7 +13,7 @@ A compact Torch package for split-safe covariance calibration of a contact-aided
 
 ## Notebooks
 
-- [Covariance tuning tutorial](notebooks/covariance_tuning_tutorial.ipynb): a small scalar-to-Torch walkthrough.
+- [Covariance tuning tutorial](notebooks/covariance_tuning_tutorial.ipynb): a small scalar-to-Torch walkthrough with a captured CUDA training step.
 - [CUDA graph + compile benchmark](notebooks/covariance_calibration_run.ipynb): a repeatable runtime record. An RTX 5090 Laptop GPU with Torch 2.12 and CUDA 13 measured about **0.8–0.9 ms/step** and **8k batched rows/s**; rerun it for your machine.
 
 ## Install

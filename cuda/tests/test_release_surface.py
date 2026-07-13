@@ -38,7 +38,16 @@ def test_readme_and_notebooks_are_compact_and_portable():
     assert all(document["nbformat"] == 4 for document in documents.values())
     tutorial = json.dumps(documents["covariance_tuning_tutorial.ipynb"])
     benchmark = json.dumps(documents["covariance_calibration_run.ipynb"])
+    assert len(documents["covariance_tuning_tutorial.ipynb"]["cells"]) <= 12
+    assert len(documents["covariance_calibration_run.ipynb"]["cells"]) == 3
     assert "_SgScalar" in tutorial
+    assert "CUDAGraph" in tutorial
+    assert "cholesky_solve" in tutorial
     assert "cuda-graph-compile" in benchmark
     assert "ms_per_step" in benchmark
     assert "/home/" not in tutorial + benchmark
+    for document in documents.values():
+        for cell in document["cells"]:
+            if cell["cell_type"] == "code":
+                assert cell["execution_count"] is None
+                assert cell["outputs"] == []
