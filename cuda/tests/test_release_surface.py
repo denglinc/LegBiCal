@@ -28,6 +28,8 @@ def test_readme_and_notebooks_are_compact_and_portable():
     assert "estimation-calibration-cuda train example" in readme
     assert "contact_process_covariance" in readme
     assert "about **0.8–0.9 ms/step**" in readme
+    assert readme.index("## Quick start") < readme.index("## Notebooks") \
+        < readme.index("## Python API")
 
     notebooks = sorted((CUDA_ROOT / "notebooks").glob("*.ipynb"))
     assert [path.name for path in notebooks] == [
@@ -47,7 +49,13 @@ def test_readme_and_notebooks_are_compact_and_portable():
     assert "ms_per_step" in benchmark
     assert "/home/" not in tutorial + benchmark
     for document in documents.values():
-        for cell in document["cells"]:
-            if cell["cell_type"] == "code":
-                assert cell["execution_count"] is None
-                assert cell["outputs"] == []
+        code_cells = [
+            cell for cell in document["cells"] if cell["cell_type"] == "code"
+        ]
+        assert all(isinstance(cell["execution_count"], int) for cell in code_cells)
+        assert any(cell["outputs"] for cell in code_cells)
+    assert any(
+        output["output_type"] == "display_data"
+        for cell in documents["covariance_tuning_tutorial.ipynb"]["cells"]
+        for output in cell.get("outputs", [])
+    )
