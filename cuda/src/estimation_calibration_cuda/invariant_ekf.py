@@ -187,7 +187,14 @@ class InvariantEKF:
             self.contacts[int(cid)] = bool(indicator)
 
     # -- propagation -----------------------------------------------------------
-    def propagate(self, gyro: torch.Tensor, accel: torch.Tensor, dt) -> None:
+    def propagate(
+        self,
+        gyro: torch.Tensor,
+        accel: torch.Tensor,
+        dt,
+        contact_process_covariance: torch.Tensor | None = None,
+    ) -> None:
+        """Propagate with an optional ``[N,3,3]`` candidate-id covariance."""
         X_old = self.X
         P_old = self.P
         R_old = X_old[0:3, 0:3]
@@ -222,9 +229,19 @@ class InvariantEKF:
         Qk = torch.zeros(dimP, dimP, dtype=dtype, device=device)
         Qk[0:3, 0:3] = self.covs["Qg"]
         Qk[3:6, 3:6] = self.covs["Qa"]
-        for col in self.estimated_contact_positions.values():
-            sl = col_error_slice(col)
-            Qk[sl, sl] = self.covs["Qc"]
+        if contact_process_covariance is None:
+            for col in self.estimated_contact_positions.values():
+                sl = col_error_slice(col)
+                Qk[sl, sl] = self.covs["Qc"]
+        else:
+            if contact_process_covariance.ndim != 3 \
+                    or contact_process_covariance.shape[-2:] != (3, 3):
+                raise ValueError("contact_process_covariance must have shape [N,3,3]")
+            for candidate_id, col in self.estimated_contact_positions.items():
+                if candidate_id >= contact_process_covariance.shape[0]:
+                    raise ValueError("active candidate is outside contact_process_covariance")
+                sl = col_error_slice(col)
+                Qk[sl, sl] = contact_process_covariance[candidate_id]
         Qk[bias:bias + 3, bias:bias + 3] = self.covs["Qbg"]
         Qk[bias + 3:bias + 6, bias + 3:bias + 6] = self.covs["Qba"]
 
@@ -383,7 +400,8 @@ def start_filter(X0: torch.Tensor, theta0: torch.Tensor, P0: torch.Tensor,
 
 def run_rows(filt: InvariantEKF, imu_step: torch.Tensor, dt,
              p_meas: torch.Tensor, flags, prev_flags_row, R_kin_pos: torch.Tensor,
-             *, collect_nis: bool = False, changes_list=None):
+             *, collect_nis: bool = False, changes_list=None,
+             contact_process_covariance: torch.Tensor | None = None):
     """Advance an existing filter over a block of rows (for truncated BPTT).
 
     Row r in the block: propagate with ``imu_step[r]`` (the IMU sample driving
@@ -408,12 +426,22 @@ def run_rows(filt: InvariantEKF, imu_step: torch.Tensor, dt,
             for r in range(n_rows)
         ]
     cand_ids = list(range(N))
+    if contact_process_covariance is not None and contact_process_covariance.shape != \
+            (n_rows, N, 3, 3):
+        raise ValueError(
+            "contact_process_covariance must match [rows,N,3,3], got "
+            f"{tuple(contact_process_covariance.shape)}")
     dt = torch.as_tensor(dt, dtype=filt.X.dtype, device=filt.X.device)  # one H2D copy
     R_out, v_out, p_out = [], [], []
     nis_values: list[torch.Tensor] = []
     nis_dims: list[int] = []
     for r in range(n_rows):
-        filt.propagate(imu_step[r, 0:3], imu_step[r, 3:6], dt)
+        if contact_process_covariance is None:
+            filt.propagate(imu_step[r, 0:3], imu_step[r, 3:6], dt)
+        else:
+            filt.propagate(
+                imu_step[r, 0:3], imu_step[r, 3:6], dt,
+                contact_process_covariance[r])
         changes = changes_list[r]
         if changes:
             filt.set_contacts(changes)
@@ -474,6 +502,7 @@ def replay_inekf_torch(
     *,
     collect_nis: bool = False,
     s_jitter: float = 0.0,
+    contact_process_covariance: torch.Tensor | None = None,
 ):
     """Replay with a fixed contact-event schedule (deterministic, differentiable).
 
@@ -488,6 +517,9 @@ def replay_inekf_torch(
     if isinstance(flags, torch.Tensor):
         flags = flags.detach().cpu().numpy()
     flags = flags.astype(bool)
+    if contact_process_covariance is not None \
+            and contact_process_covariance.shape != (T, N, 3, 3):
+        raise ValueError("contact_process_covariance must have shape [T,N,3,3]")
 
     filt = InvariantEKF(X0, theta0, P0, covs, s_jitter=s_jitter)
     filt.set_contacts([(i, bool(flags[0, i])) for i in range(N)])
@@ -502,7 +534,12 @@ def replay_inekf_torch(
     dt = torch.as_tensor(dt, dtype=X0.dtype, device=X0.device)  # one H2D copy
 
     for k in range(1, T):
-        filt.propagate(imu[k - 1, 0:3], imu[k - 1, 3:6], dt)
+        if contact_process_covariance is None:
+            filt.propagate(imu[k - 1, 0:3], imu[k - 1, 3:6], dt)
+        else:
+            filt.propagate(
+                imu[k - 1, 0:3], imu[k - 1, 3:6], dt,
+                contact_process_covariance[k])
         changes = [(i, bool(flags[k, i])) for i in range(N) if flags[k, i] != flags[k - 1, i]]
         if changes:
             filt.set_contacts(changes)

@@ -370,7 +370,8 @@ def detach_state(state: State) -> State:
 # filter stages (all batched, static shapes)
 
 
-def _propagate(state: State, gyro, accel, dt_row, prop_mask, covs) -> State:
+def _propagate(state: State, gyro, accel, dt_row, prop_mask, covs,
+               contact_process_covariance: torch.Tensor | None = None) -> State:
     """Propagate with scatter-by-GEMM assembly (tests/test_propagate_block.py
     holds the zeros+slice-assign dense reference).
 
@@ -412,8 +413,14 @@ def _propagate(state: State, gyro, accel, dt_row, prop_mask, covs) -> State:
           + _const("prop_const", dtype, device))
     A, Adj = AB[:, 0], AB[:, 1]
 
-    # process noise: Qc only on slots active during this interval
-    slot_q = covs["Qc"] * prop_mask.to(dtype)[:, :, None, None]
+    # Keep the shared-Q expression literal when no override is supplied.
+    if contact_process_covariance is None:
+        slot_q = covs["Qc"] * prop_mask.to(dtype)[:, :, None, None]
+    else:
+        if contact_process_covariance.shape != (B, N_SLOTS, 3, 3):
+            raise ValueError(
+                "contact_process_covariance must have shape [B,8,3,3]")
+        slot_q = contact_process_covariance * prop_mask.to(dtype)[:, :, None, None]
     vq = torch.cat([covs["Qg"].reshape(1, 9).expand(B, 9),
                     covs["Qa"].reshape(1, 9).expand(B, 9),
                     slot_q.reshape(B, 72),
@@ -544,13 +551,17 @@ def _insert(state: State, p_meas, insert_mask, R_pre, N_blk) -> State:
 
 
 def step(state: State, imu, p_meas, dt_row, prop_mask, correct_mask,
-         insert_mask, covs, R_kin, s_jitter: float) -> tuple[State, RowOut]:
+         insert_mask, covs, R_kin, s_jitter: float,
+         contact_process_covariance: torch.Tensor | None = None) \
+        -> tuple[State, RowOut]:
     """One filter row: propagate -> masked correct -> masked insert.
 
     Removal needs no operation (mask clear happens in the schedule). Padded
     rows (dt_row = 0, all-false masks) are exact no-ops.
     """
-    state = _propagate(state, imu[:, 0:3], imu[:, 3:6], dt_row, prop_mask, covs)
+    state = _propagate(
+        state, imu[:, 0:3], imu[:, 3:6], dt_row, prop_mask, covs,
+        contact_process_covariance)
     R_pre = state.X[:, 0:3, 0:3]
     state, nis, N_blk = _correct(state, p_meas, correct_mask, R_kin, s_jitter)
     state = _insert(state, p_meas, insert_mask, R_pre, N_blk)
@@ -569,19 +580,27 @@ def apply_row0(state: State, p_meas0, insert0, R_kin) -> State:
 
 def run_rows_fixed(state: State, batch: BatchData, rows: slice, covs,
                    R_kin, *, s_jitter: float = 0.0,
-                   step_fn: Callable | None = None) -> tuple[State, dict]:
+                   step_fn: Callable | None = None,
+                   contact_process_covariance: torch.Tensor | None = None) \
+        -> tuple[State, dict]:
     """Advance over batch rows [rows.start, rows.stop) (local indices >= 1).
 
     Returns (state, out) with out tensors shaped (B, T_chunk, ...). The caller
     detaches state at truncated-BPTT chunk boundaries via ``detach_state``.
     """
     fn = step if step_fn is None else step_fn
+    if contact_process_covariance is not None and contact_process_covariance.shape != \
+            (batch.B, batch.T_pad, N_SLOTS, 3, 3):
+        raise ValueError(
+            "contact_process_covariance must have shape [B,T,8,3,3]")
     R_out, v_out, p_out, nis_out = [], [], [], []
     for t in range(rows.start, rows.stop):
-        state, out = fn(state, batch.imu[:, t], batch.p_meas[:, t],
-                        batch.dt_row[:, t], batch.prop_mask[:, t],
-                        batch.correct_mask[:, t], batch.insert_mask[:, t],
-                        covs, R_kin, s_jitter)
+        args = (state, batch.imu[:, t], batch.p_meas[:, t],
+                batch.dt_row[:, t], batch.prop_mask[:, t],
+                batch.correct_mask[:, t], batch.insert_mask[:, t],
+                covs, R_kin, s_jitter)
+        state, out = (fn(*args) if contact_process_covariance is None
+                      else fn(*args, contact_process_covariance[:, t]))
         R_out.append(out.R)
         v_out.append(out.v)
         p_out.append(out.p)

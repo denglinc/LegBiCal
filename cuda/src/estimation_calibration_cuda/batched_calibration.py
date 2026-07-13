@@ -88,7 +88,8 @@ class ChunkGraph:
     def __init__(self, modules, params, batch: fsi.BatchData, *, chunk: int,
                  s_jitter: float, dtype: torch.dtype,
                  state0: fsi.State | None = None,
-                 step_fn=None) -> None:
+                 step_fn=None,
+                 contact_process_covariance: torch.Tensor | None = None) -> None:
         B = batch.B
         device = batch.imu.device
         self.batch = batch
@@ -103,6 +104,17 @@ class ChunkGraph:
         self.gt = batch.gt_v_B[:, c].clone()
         self.valid = batch.valid[:, c].clone()
         self.nis_dim = batch.nis_dim[:, c].clone()
+        if contact_process_covariance is not None and contact_process_covariance.shape != \
+                (batch.B, batch.T_pad, fsi.N_SLOTS, 3, 3):
+            raise ValueError(
+                "contact_process_covariance must have shape [B,T,8,3,3]")
+        self.process_source = contact_process_covariance
+        self.process = None if contact_process_covariance is None else \
+            contact_process_covariance[:, c].detach().clone().requires_grad_(
+                contact_process_covariance.requires_grad)
+        self.process_grad = (torch.zeros_like(self.process)
+                             if self.process is not None and self.process.requires_grad
+                             else None)
         self.X = torch.zeros(B, fsi.DIM_X, fsi.DIM_X, dtype=dtype, device=device)
         self.theta = torch.zeros(B, fsi.DIM_THETA, dtype=dtype, device=device)
         self.P = torch.zeros(B, fsi.DIM_P, fsi.DIM_P, dtype=dtype, device=device)
@@ -120,10 +132,12 @@ class ChunkGraph:
             st = fsi.State(self.X, self.theta, self.P, self.jc, self.ic)
             R_l, v_l, nis_l = [], [], []
             for t in range(chunk):
-                st, out = step(st, self.imu[:, t], self.p_meas[:, t],
-                               self.dt_row[:, t], self.prop[:, t],
-                               self.corr[:, t], self.ins[:, t],
-                               covs, R_kin, s_jitter)
+                args = (st, self.imu[:, t], self.p_meas[:, t],
+                        self.dt_row[:, t], self.prop[:, t],
+                        self.corr[:, t], self.ins[:, t],
+                        covs, R_kin, s_jitter)
+                st, out = (step(*args) if self.process is None
+                           else step(*args, self.process[:, t]))
                 R_l.append(out.R)
                 v_l.append(out.v)
                 nis_l.append(out.nis)
@@ -134,9 +148,22 @@ class ChunkGraph:
             se = ((v_B - self.gt) ** 2).sum(-1)
             loss_body = (se * self.valid).sum() / self.valid.sum().clamp_min(1)
             nis_term = LAMBDA["nis"] * fsi.reg_nis_masked(nis, self.nis_dim)
-            grads = torch.autograd.grad(loss_body + nis_term, params)
-            for buf, gr in zip(self.grads, grads):
-                buf.copy_(gr)
+            loss = loss_body + nis_term
+            if self.process is None:
+                grads = torch.autograd.grad(loss, params)
+                for buf, grad in zip(self.grads, grads):
+                    buf.copy_(grad)
+            else:
+                targets = [*params]
+                if self.process.requires_grad:
+                    targets.append(self.process)
+                grads = torch.autograd.grad(loss, targets, allow_unused=True)
+                for buf, grad in zip(self.grads, grads[:len(params)]):
+                    buf.copy_(torch.zeros_like(buf) if grad is None else grad)
+                if self.process_grad is not None:
+                    self.process_grad.copy_(
+                        torch.zeros_like(self.process_grad)
+                        if grads[-1] is None else grads[-1])
             self.loss_body.copy_(loss_body.detach())
             self.nis_term.copy_(nis_term.detach())
             has = self.nis_dim > 0
@@ -158,11 +185,12 @@ class ChunkGraph:
             # use data-dependent python that dynamo cannot trace
             with torch.no_grad():
                 covs_w, R_kin_w = build_covs(modules)
-                fsi.step(fsi.State(self.X, self.theta, self.P, self.jc,
-                                   self.ic),
-                         self.imu[:, 0], self.p_meas[:, 0], self.dt_row[:, 0],
-                         self.prop[:, 0], self.corr[:, 0], self.ins[:, 0],
-                         covs_w, R_kin_w, s_jitter)
+                args = (fsi.State(self.X, self.theta, self.P, self.jc, self.ic),
+                        self.imu[:, 0], self.p_meas[:, 0], self.dt_row[:, 0],
+                        self.prop[:, 0], self.corr[:, 0], self.ins[:, 0],
+                        covs_w, R_kin_w, s_jitter)
+                fsi.step(*args) if self.process is None else \
+                    fsi.step(*args, self.process[:, 0])
         side = torch.cuda.Stream()
         side.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(side):
@@ -185,6 +213,9 @@ class ChunkGraph:
         self.gt.copy_(b.gt_v_B[:, c])
         self.valid.copy_(b.valid[:, c])
         self.nis_dim.copy_(b.nis_dim[:, c])
+        if self.process is not None:
+            with torch.no_grad():
+                self.process.copy_(self.process_source[:, c])
 
     def load_state(self, state: fsi.State) -> None:
         self.X.copy_(state.X.detach())
