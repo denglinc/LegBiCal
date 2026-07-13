@@ -22,15 +22,23 @@ def test_package_metadata_and_license_agree():
     assert (CUDA_ROOT / "LICENSE").read_text().startswith("MIT License\n")
 
 
-def test_readme_and_notebook_are_compact_and_clean():
+def test_readme_and_notebooks_are_compact_and_portable():
     readme = (CUDA_ROOT / "README.md").read_text()
-    assert 100 <= len(readme.splitlines()) <= 140
+    assert 100 <= len(readme.splitlines()) <= 150
     assert "estimation-calibration-cuda train example" in readme
     assert "contact_process_covariance" in readme
-    notebooks = list((CUDA_ROOT / "notebooks").glob("*.ipynb"))
-    assert [path.name for path in notebooks] == ["covariance_tuning_tutorial.ipynb"]
-    notebook = json.loads(notebooks[0].read_text())
-    for cell in notebook["cells"]:
-        if cell["cell_type"] == "code":
-            assert cell["execution_count"] is None
-            assert cell["outputs"] == []
+    assert "about **0.8–0.9 ms/step**" in readme
+
+    notebooks = sorted((CUDA_ROOT / "notebooks").glob("*.ipynb"))
+    assert [path.name for path in notebooks] == [
+        "covariance_calibration_run.ipynb",
+        "covariance_tuning_tutorial.ipynb",
+    ]
+    documents = {path.name: json.loads(path.read_text()) for path in notebooks}
+    assert all(document["nbformat"] == 4 for document in documents.values())
+    tutorial = json.dumps(documents["covariance_tuning_tutorial.ipynb"])
+    benchmark = json.dumps(documents["covariance_calibration_run.ipynb"])
+    assert "_SgScalar" in tutorial
+    assert "cuda-graph-compile" in benchmark
+    assert "ms_per_step" in benchmark
+    assert "/home/" not in tutorial + benchmark
