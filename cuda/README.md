@@ -11,11 +11,6 @@ A compact Torch package for split-safe covariance calibration of a contact-aided
 - Cached tensors and gather-based assembly avoid repeated allocation,
   scatter/atomics, and slow tiny float64 GEMMs while preserving autograd.
 
-## Notebooks
-
-- [Covariance tuning tutorial](notebooks/covariance_tuning_tutorial.ipynb): a small scalar-to-Torch walkthrough with a captured CUDA training step.
-- [CUDA graph + compile benchmark](notebooks/covariance_calibration_run.ipynb): a repeatable runtime record. An RTX 5090 Laptop GPU with Torch 2.12 and CUDA 13 measured about **0.8–0.9 ms/step** and **8k batched rows/s**; rerun it for your machine.
-
 ## Install
 
 Python 3.10–3.14 and Torch 2.11 or newer are required.
@@ -49,6 +44,11 @@ A run contains exactly four files:
 | `covariances.npz` | validation-selected covariance matrices |
 | `metrics.json` | train/validation history and optional one-time test result |
 | `manifest.json` | schema, execution facts, and hashes of the other files |
+
+## Notebooks
+
+- [Covariance tuning tutorial](notebooks/covariance_tuning_tutorial.ipynb): a small scalar-to-Torch walkthrough with a captured CUDA training step.
+- [CUDA graph + compile benchmark](notebooks/covariance_calibration_run.ipynb): a repeatable runtime record. An RTX 5090 Laptop GPU with Torch 2.12 and CUDA 13 measured about **0.8–0.9 ms/step** and **8k batched rows/s**; rerun it for your machine.
 
 ## Python API
 
@@ -140,7 +140,3 @@ Binary flags still control propagation, correction, insertion, and removal.
 - Contact schedules are explicit binary inputs; this package does not infer them.
 - CPU supports eager and default compile modes; CUDA is required for graph modes.
 - Calibration quality depends on dataset coverage and is not asserted by software gates.
-
-## License
-
-The MIT license in `cuda/LICENSE` applies to this `cuda/` subproject only.

@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<robot name="stride_frost_planar">
+  <!-- Massless joints reproduce FROST's planar floating base. -->
+  <link name="world"/>
+  <link name="base_x_link"/>
+  <joint name="base_x" type="prismatic">
+    <parent link="world"/><child link="base_x_link"/>
+    <axis xyz="1 0 0"/><limit lower="-100" upper="100" effort="0" velocity="100"/>
+  </joint>
+  <link name="base_z_link"/>
+  <joint name="base_z" type="prismatic">
+    <parent link="base_x_link"/><child link="base_z_link"/>
+    <axis xyz="0 0 1"/><limit lower="-100" upper="100" effort="0" velocity="100"/>
+  </joint>
+  <link name="pelvis">
+    <inertial>
+      <origin xyz="-0.026461 0 -0.046589"/>
+      <mass value="1.5566"/>
+      <inertia ixx="0.000659" ixy="0" ixz="0" iyy="0.000659" iyz="0" izz="0.000659"/>
+    </inertial>
+  </link>
+  <joint name="base_pitch" type="revolute">
+    <parent link="base_z_link"/><child link="pelvis"/>
+    <axis xyz="0 1 0"/><limit lower="-6.4" upper="6.4" effort="0" velocity="100"/>
+  </joint>
+
+  <link name="right_thigh">
+    <inertial>
+      <origin xyz="0.001133 0 -0.08282"/>
+      <mass value="0.69051"/>
+      <inertia ixx="0.00025" ixy="0" ixz="0" iyy="0.00025" iyz="0" izz="0.00025"/>
+    </inertial>
+  </link>
+  <joint name="right_hip" type="revolute">
+    <origin xyz="-0.0265 0 -0.0695"/>
+    <parent link="pelvis"/><child link="right_thigh"/>
+    <axis xyz="0 -1 0"/><limit lower="-6.4" upper="6.4" effort="100" velocity="100"/>
+  </joint>
+  <link name="right_shin">
+    <inertial>
+      <origin xyz="0.001271 0 -0.077014"/>
+      <mass value="0.19964"/>
+      <inertia ixx="0.000106" ixy="0" ixz="0" iyy="0.000106" iyz="0" izz="0.000106"/>
+    </inertial>
+  </link>
+  <joint name="right_knee" type="revolute">
+    <origin xyz="0 0 -0.168"/>
+    <parent link="right_thigh"/><child link="right_shin"/>
+    <axis xyz="0 -1 0"/><limit lower="-6.4" upper="6.4" effort="100" velocity="100"/>
+  </joint>
+  <link name="right_toe"/>
+  <joint name="right_toe_fixed" type="fixed">
+    <origin xyz="0 0 0.226"/>
+    <parent link="right_shin"/><child link="right_toe"/>
+  </joint>
+
+  <link name="left_thigh">
+    <inertial>
+      <origin xyz="0.001087 0 -0.08282"/>
+      <mass value="0.69051"/>
+      <inertia ixx="0.00025" ixy="0" ixz="0" iyy="0.00025" iyz="0" izz="0.00025"/>
+    </inertial>
+  </link>
+  <joint name="left_hip" type="revolute">
+    <origin xyz="-0.0265 0 -0.0695"/>
+    <parent link="pelvis"/><child link="left_thigh"/>
+    <axis xyz="0 1 0"/><limit lower="-6.4" upper="6.4" effort="100" velocity="100"/>
+  </joint>
+  <link name="left_shin">
+    <inertial>
+      <origin xyz="0.001274 0 -0.077006"/>
+      <mass value="0.19964"/>
+      <inertia ixx="0.000105" ixy="0" ixz="0" iyy="0.000105" iyz="0" izz="0.000105"/>
+    </inertial>
+  </link>
+  <joint name="left_knee" type="revolute">
+    <origin xyz="0 0 -0.168"/>
+    <parent link="left_thigh"/><child link="left_shin"/>
+    <axis xyz="0 1 0"/><limit lower="-6.4" upper="6.4" effort="100" velocity="100"/>
+  </joint>
+  <link name="left_toe"/>
+  <joint name="left_toe_fixed" type="fixed">
+    <origin xyz="0 0 0.226"/>
+    <parent link="left_shin"/><child link="left_toe"/>
+  </joint>
+</robot>

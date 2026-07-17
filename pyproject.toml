@@ -7,6 +7,8 @@ name = "estimation-calibration"
 version = "0.1.0"
 description = "Estimation covariance and kinematic calibration for legged robot state estimation."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [
   { name = "Denglin Cheng" }
@@ -14,22 +16,30 @@ authors = [
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.10",
-  "matplotlib>=3.7",
   "casadi>=3.6",
   "cvxpy>=1.4",
-  "pypardiso>=0.4"
+  "pin>=2.6"
 ]
 
 [project.optional-dependencies]
-robotics = [
-  "pin>=2.6"
-]
+dev = ["build>=1", "pytest>=8"]
 
 [project.scripts]
 estimation-calibration = "bilevel.run_bilevel:main"
 
 [tool.setuptools]
-package-dir = {"" = "src/python"}
+package-dir = {"" = "python"}
 
 [tool.setuptools.packages.find]
-where = ["src/python"]
+where = ["python"]
+include = ["bilevel*"]
+
+[tool.setuptools.package-data]
+bilevel = [
+  "resources/data/*.npz",
+  "resources/robot/*.urdf",
+  "resources/codegen/*.c"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

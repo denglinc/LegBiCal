@@ -1,0 +1,14 @@
+name: stride-prime
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pinocchio=3.4
+  - eigen=5.0
+  - eigenpy=3.10
+  - numpy=2.2
+  - scipy=1.15
+  - cmake=4.4
+  - ninja=1.13
+  - pybind11=3.0
+  - compilers

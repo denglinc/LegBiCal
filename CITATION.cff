@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper."
+title: "LegBiCal"
+type: software
+authors:
+  - family-names: Cheng
+    given-names: Denglin
+  - family-names: Kang
+    given-names: Jiarong
+  - family-names: Xiong
+    given-names: Xiaobin
+repository-code: "https://github.com/DLinC3/LegBiCal"
+preferred-citation:
+  type: article
+  title: "Simultaneous Calibration of Noise Covariance and Kinematics for State Estimation of Legged Robots via Bi-level Optimization"
+  authors:
+    - family-names: Cheng
+      given-names: Denglin
+    - family-names: Kang
+      given-names: Jiarong
+    - family-names: Xiong
+      given-names: Xiaobin
+  year: 2025
+  identifiers:
+    - type: arxiv
+      value: "2510.11539"
