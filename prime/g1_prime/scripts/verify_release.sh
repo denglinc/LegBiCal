@@ -70,7 +70,7 @@ assert "Blue/yellow arrows: estimated left/right contact forces" in landing_text
 assert "pink: ground-truth foot forces" in landing_text
 assert "green point: estimated CoP" in landing_text
 assert "Kang et al.</a>—" in landing_text
-assert "(BSD-3-Clause)." in landing_text
+assert "(BSD-3-Clause)" not in landing_text
 assert "well-robotics), BSD-3" not in landing_text
 assert "<footer>" not in landing_text
 assert landing_text.count("<iframe") == 1
