@@ -28,8 +28,10 @@ def test_readme_and_notebooks_are_compact_and_portable():
     assert "estimation-calibration-cuda train example" in readme
     assert "contact_process_covariance" in readme
     assert "about **0.8–0.9 ms/step**" in readme
-    assert readme.index("## Quick start") < readme.index("## Notebooks") \
+    assert readme.index("## Implementation") < readme.index("## Notebooks") \
+        < readme.index("## Contents") < readme.index("## Quick start") \
         < readme.index("## Python API")
+    assert "SO(3) covariance tuning tutorial" in readme
 
     notebooks = sorted((CUDA_ROOT / "notebooks").glob("*.ipynb"))
     assert [path.name for path in notebooks] == [

@@ -3,64 +3,73 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>0.5x example segment visualization</title>
+  <title>Calibrated Contact-Aware Full-Information Estimation</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
     body { margin: 0; background: #0d1520; color: #edf4fb; }
-    main { width: min(1120px, calc(100% - 32px)); margin: 32px auto 72px; }
-    h1 { margin: 0 0 20px; font-size: clamp(1.25rem, 3vw, 2rem); font-weight: 650; }
+    main { width: min(1280px, calc(100% - 24px)); margin: 12px auto 40px; }
+    .viewer-shell { overflow: hidden; background: #101b27; border: 1px solid #2b4053; border-radius: 10px; }
+    .toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding: 12px 14px; }
+    .copy { min-width: 0; }
+    h1 { margin: 0; font-size: clamp(1.05rem, 2.4vw, 1.45rem); font-weight: 650; }
+    .legend { margin: 5px 0 0; color: #aebfce; font-size: .9rem; line-height: 1.35; }
     h2 { margin: 0 0 12px; font-size: 1rem; text-transform: lowercase; }
-    .segment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .segment { padding: 14px; background: #162331; border: 1px solid #2b4053; border-radius: 10px; }
+    .segment-grid { display: grid; grid-template-columns: repeat(2, minmax(190px, 1fr)); gap: 8px; flex: 0 0 auto; }
+    .segment { padding: 9px 10px; background: #162331; border: 1px solid #2b4053; border-radius: 8px; }
     .segment.active { border-color: #009e73; }
     .controls { display: flex; flex-wrap: wrap; gap: 8px; }
-    button { border: 0; border-radius: 7px; padding: 9px 13px; background: #344454; color: white; font-weight: 650; cursor: pointer; }
+    button { border: 0; border-radius: 7px; padding: 8px 11px; background: #344454; color: white; font-weight: 650; cursor: pointer; }
     button[aria-pressed="true"] { background: #009e73; }
     button:hover, button:focus-visible { filter: brightness(1.13); }
-    .viewer { margin-top: 12px; padding: 0; overflow: hidden; background: #000; border: 1px solid #2b4053; border-radius: 10px; }
-    iframe { display: block; width: 100%; height: 74vh; min-height: 540px; border: 0; background: #000; }
-    footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid #2b4053; color: #aebfce; line-height: 1.6; }
+    .viewer { padding: 0; overflow: hidden; background: #000; border-top: 1px solid #2b4053; }
+    iframe { display: block; width: 100%; height: calc(100vh - 132px); min-height: 540px; border: 0; background: #000; }
+    footer { margin-top: 22px; color: #aebfce; text-align: center; font-size: .9rem; }
     a { color: #56b4e9; }
-    @media (max-width: 760px) {
+    @media (max-width: 900px) {
+      .toolbar { align-items: stretch; flex-direction: column; }
       .segment-grid { grid-template-columns: 1fr; }
       .controls button { flex: 1; }
-      iframe { min-height: 430px; }
+      iframe { height: 68vh; min-height: 430px; }
     }
   </style>
 </head>
 <body>
 <main>
-  <h1>0.5x · 20 s example segment visualization</h1>
-
-  <div class="segment-grid">
-    <section class="segment active" data-segment-card="0">
-      <h2>segment 1</h2>
-      <div class="controls">
-        <button data-segment="0" data-rate="0.5" aria-pressed="true">Load 0.5x</button>
-        <button data-segment="0" data-rate="1" aria-pressed="false">Load 1x</button>
+  <section class="viewer-shell">
+    <div class="toolbar">
+      <div class="copy">
+        <h1>Calibrated Contact-Aware Full-Information Estimation</h1>
+        <p class="legend">The light-gray robot is the calibrated estimate; the translucent blue robot is the ground-truth reference.</p>
       </div>
-    </section>
 
-    <section class="segment" data-segment-card="1">
-      <h2>segment 2</h2>
-      <div class="controls">
-        <button data-segment="1" data-rate="0.5" aria-pressed="false">Load 0.5x</button>
-        <button data-segment="1" data-rate="1" aria-pressed="false">Load 1x</button>
+      <div class="segment-grid">
+        <section class="segment active" data-segment-card="0">
+          <h2>segment 1</h2>
+          <div class="controls">
+            <button data-segment="0" data-rate="0.5" aria-pressed="true">Load 0.5x</button>
+            <button data-segment="0" data-rate="1" aria-pressed="false">Load 1x</button>
+          </div>
+        </section>
+
+        <section class="segment" data-segment-card="1">
+          <h2>segment 2</h2>
+          <div class="controls">
+            <button data-segment="1" data-rate="0.5" aria-pressed="false">Load 0.5x</button>
+            <button data-segment="1" data-rate="1" aria-pressed="false">Load 1x</button>
+          </div>
+        </section>
       </div>
-    </section>
-  </div>
+    </div>
 
-  <section class="viewer">
-    <iframe id="viewer-frame" src="media/run1_calibrated.html" title="segment 1 at 0.5x" allowfullscreen></iframe>
+    <div class="viewer">
+      <iframe id="viewer-frame" src="media/run1_calibrated.html" title="segment 1 at 0.5x" allowfullscreen></iframe>
+    </div>
   </section>
 
   <footer>
     Built on the excellent work of
-    <a href="https://github.com/well-robotics/PRIME">PRIME</a>
-    (well-robotics), BSD-3. The visualizations are built on top of PRIME's
-    excellent estimator and use its experiment scene palette.
-    Source and local replay instructions are in
-    <a href="https://github.com/DLinC3/LegBiCal">LegBiCal</a>.
+    <a href="https://arxiv.org/abs/2605.17681">Kang et al.</a>—<a href="https://github.com/well-robotics/PRIME">PRIME</a>
+    (BSD-3-Clause).
   </footer>
 </main>
 <script>

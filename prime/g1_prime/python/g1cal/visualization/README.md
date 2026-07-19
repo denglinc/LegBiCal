@@ -4,21 +4,14 @@ Drake owns playback time and routes one immutable scientific frame contract to
 Meshcat and MuJoCo. Rendering code never owns estimator state, and the MuJoCo
 path uses kinematic forwarding rather than simulation stepping.
 
-## Drake diagram
-
-```mermaid
-flowchart LR
-  T[Drake Context time] --> P[MotionForcePlaybackSystem<br/>LeafSystem]
-  P -->|AbstractOutputPort: frame| M[MeshcatMotionForceSystem<br/>LeafSystem]
-  P -->|AbstractOutputPort: frame| U[MujocoMotionForceSystem<br/>LeafSystem]
-  M --> MR[MeshcatMotionForceRenderer]
-  U --> UR[MujocoKinematicRenderer]
-```
+## Drake ownership
 
 `build_visualization_diagram()` constructs a real `pydrake.systems.framework`
 `Diagram`. `MotionForcePlaybackSystem` maps Context time to a transition index
-and publishes `VisualizationFrame` through an abstract port. Either or both
-sink LeafSystems can be connected without changing the sequence or time owner.
+and publishes `VisualizationFrame` through an abstract port. Meshcat and
+MuJoCo sink LeafSystems consume that same frame and call their backend
+renderers. Either or both sinks can be connected without changing the sequence
+or time owner.
 
 ## Modules
 

@@ -16,14 +16,9 @@ package's fixed-slot CUDA path.
 - Benchmark: RTX 5090 Laptop, Torch `2.12.0+cu130`, CUDA `13.0`, median
   `0.8967 ms/step`, `7,806` batched rows/s, and `0.1718 GB` peak memory.
 
-Install the notebook extra from `cuda/`:
-
-```bash
-python -m pip install -e '.[notebooks]'
-```
-
-The benchmark reads real rollouts from `LEG_BICAL_DATA_ROOT` and writes new
-measurements under the ignored `runs/notebook_benchmark/` directory. Recorded
-numbers describe that hardware/software configuration only.
+Install with `python -m pip install -e '.[notebooks]'` from `cuda/`. The
+benchmark reads `LEG_BICAL_DATA_ROOT` and writes new measurements under the
+ignored `runs/notebook_benchmark/`; recorded numbers apply only to the listed
+hardware and software.
 
 Return to the [CUDA implementation](../README.md).

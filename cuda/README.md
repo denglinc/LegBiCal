@@ -20,6 +20,21 @@ contact-aided invariant EKF.
   softplus diagonals, conditioning regularization, and explicit covariance
   floors.
 
+## Notebooks
+
+The committed notebooks retain their outputs. These are machine-specific
+execution records, not estimation-quality claims.
+
+| Notebook | Recorded result |
+|---|---|
+| [SO(3) covariance tuning tutorial](notebooks/covariance_tuning_tutorial.ipynb) | Scalar graph gradients matched central finite differences at about `1e-13`; AdamW reduced loss from `7.282e-03` to `1.182e-04` in `32.37 s` |
+| [CUDA graph + compile benchmark](notebooks/covariance_calibration_run.ipynb) | RTX 5090 Laptop, Torch 2.12/CUDA 13: **0.8967 ms/step**, **7,806 batched rows/s**, **0.1718 GB** peak |
+
+On the recorded benchmark, the fixed replay ran at about **0.8–0.9 ms/step**.
+
+See [`notebooks/README.md`](notebooks/README.md) for the experiment shapes and
+rerun requirements.
+
 ## Contents
 
 | Path | Responsibility |
@@ -67,21 +82,6 @@ Training opens only train episodes. Validation body-velocity RMSE selects the
 saved covariance state. Test arrays are opened only by the explicit
 `evaluate` command, and a run accepts that write once.
 
-## Notebooks
-
-The committed notebooks retain their outputs. These are machine-specific
-execution records, not estimation-quality claims.
-
-| Notebook | Recorded result |
-|---|---|
-| [CUDA graph + compile benchmark](notebooks/covariance_calibration_run.ipynb) | RTX 5090 Laptop, Torch 2.12/CUDA 13: **0.8967 ms/step**, **7,806 batched rows/s**, **0.1718 GB** peak |
-| [SO(3) covariance tuning](notebooks/covariance_tuning_tutorial.ipynb) | Scalar graph gradients matched central finite differences at about `1e-13`; AdamW reduced loss from `7.282e-03` to `1.182e-04` in `32.37 s` |
-
-On the recorded benchmark, the fixed replay ran at about **0.8–0.9 ms/step**.
-
-See [`notebooks/README.md`](notebooks/README.md) for the experiment shapes and
-rerun requirements.
-
 ## Python API
 
 ```python
@@ -108,10 +108,7 @@ in the [package README](src/estimation_calibration_cuda/README.md).
 
 ## Test
 
-```bash
-python -m pip install -e '.[dev]'
-pytest
-```
+Install the `dev` extra and run `pytest -q` from `cuda/`.
 
 Numeric replay uses float64. Public episodes support at most eight contact
 candidates; contact schedules are explicit binary inputs, and an optional

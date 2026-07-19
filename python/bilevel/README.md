@@ -2,18 +2,11 @@
 
 Control plane for the B1 structured estimator and Frank--Wolfe calibration.
 
-```mermaid
-flowchart LR
-  D[data_io] --> R[robot + kinematics]
-  R --> M[models]
-  M --> F[FullInformationEstimator]
-  F --> S[sensitivity]
-  F --> L[trajectory loss]
-  S --> C[FrankWolfeCalibrator]
-  L --> C
-  C --> O[semidefinite LMO]
-  O --> C
-```
+`data_io` aligns the measurements consumed by the robot, kinematics, and
+process models. `FullInformationEstimator` preserves stage sparsity and warm
+starts; one transposed-KKT factorization and the trajectory loss supply the
+upper gradient and objective. `FrankWolfeCalibrator` uses the semidefinite LMO
+to return a feasible parameter vector.
 
 ## Modules
 
@@ -30,9 +23,5 @@ flowchart LR
 | [`codegen.py`](codegen.py) | Content-addressed compilation/loading of portable CasADi C functions |
 | [`config.py`](config.py) | Parameter slices, horizons, solver settings, and calibration bounds |
 | [`run_bilevel.py`](run_bilevel.py) | Installed CLI entry point |
-
-The lower solve preserves stage sparsity and reuses primal/dual warm starts.
-One sparse KKT factorization supplies the upper pullback, while the LMO keeps
-covariance and kinematic iterates inside the declared feasible set.
 
 Return to the [Python implementation](../README.md).

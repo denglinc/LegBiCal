@@ -1,14 +1,7 @@
 # Python package source
 
-Packaging boundary for the installable `g1cal` library and command-line
-interface. The parent [`pyproject.toml`](../pyproject.toml) maps this directory
-as the setuptools package root.
-
-## Contents
-
-| Path | Responsibility |
-|---|---|
-| [`g1cal/`](g1cal/README.md) | Calibration, lower-solver orchestration, loss, rendering, and CLI modules |
+Setuptools package root for the installable [`g1cal`](g1cal/README.md) library
+and CLI. The parent [`pyproject.toml`](../pyproject.toml) owns its metadata.
 
 The C++ build places `_g1cal_cpp` beside the package modules. Install from the
 implementation root after building:

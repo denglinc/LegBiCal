@@ -5,17 +5,11 @@ contact-aided right-invariant EKF.
 
 ## Data flow
 
-```mermaid
-flowchart LR
-  D[Dataset manifest + NPZ episodes] --> V[data.py validation]
-  V --> A[api.py run contract]
-  A --> B[batched_calibration.py]
-  B --> F[fixed_slot_inekf.py]
-  B --> C[covariance_calibration.py]
-  F --> O[checkpoint + covariances + metrics + manifest]
-  C --> O
-  R[invariant_ekf.py<br/>dynamic parity oracle] -. equation parity .-> F
-```
+`data.py` validates the dataset manifest and NPZ episodes before `api.py`
+creates the run contract. `batched_calibration.py` then combines the fixed-slot
+filter with the covariance parameterization and writes the checkpoint,
+covariances, metrics, and manifest. The dynamic filter in `invariant_ekf.py`
+remains the equation-parity reference for the fixed-slot path.
 
 ## Modules
 

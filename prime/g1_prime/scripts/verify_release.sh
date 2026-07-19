@@ -64,7 +64,11 @@ for clip in ("run1", "run2"):
 summary = json.loads((root / "data/calibrated/calibration_summary.json").read_text())
 assert summary["schema"] == "g1cal_calibration_summary_v1"
 landing_text = (root / "docs/index.html").read_text()
-assert "<title>0.5x example segment visualization</title>" in landing_text
+assert "<title>Calibrated Contact-Aware Full-Information Estimation</title>" in landing_text
+assert "The light-gray robot is the calibrated estimate" in landing_text
+assert "Kang et al.</a>—" in landing_text
+assert "(BSD-3-Clause)." in landing_text
+assert "well-robotics), BSD-3" not in landing_text
 assert landing_text.count("<iframe") == 1
 assert 'id="viewer-frame"' in landing_text
 assert 'src="media/run1_calibrated.html"' in landing_text

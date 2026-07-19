@@ -1,29 +1,19 @@
 # G1 GitHub Pages
 
-Source landing page for the calibrated G1 Meshcat segments. The two
-self-contained replays are generated from the shipped solutions and are not
-stored in Git history.
-
-## Contents
-
-| Path | Responsibility |
-|---|---|
-| [`index.html`](index.html) | One auto-starting viewer with compact segment and speed selectors |
+[`index.html`](index.html) immediately loads the first of two self-contained G1
+Meshcat replays. Its compact toolbar identifies the estimated and ground-truth
+robots and selects the segment and speed; generated replay HTML is not stored
+in Git history.
 
 ## Build locally
-
-From the G1 implementation directory:
 
 ```bash
 python scripts/publish_pages.py
 ```
 
-This creates `out/pages_site/` with the landing page and
-`media/run{1,2}_calibrated.html`. The landing page immediately starts segment 1
-at `0.5x`, loads segment 2 when its animation finishes, and loops. The two
-compact selectors can restart either segment at `0.5x` or `1x`; the selected
-rate continues across the loop. Only one self-contained replay is resident in
-the iframe at a time.
+Run this from `prime/g1_prime`. It creates `out/pages_site/`, starts segment 1
+at `0.5x`, alternates the two segments in a loop, and retains the selected
+`0.5x` or `1x` rate. Only one replay occupies the iframe at a time.
 
 ## GitHub Pages setting
 
@@ -32,15 +22,10 @@ the iframe at a time.
 3. Open **Actions**, select **Build and deploy G1 PRIME calibrated pages**, and
    run the workflow manually.
 
-The workflow at
-[`../../../.github/workflows/pages.yml`](../../../.github/workflows/pages.yml)
-builds and uploads the generated `out/pages_site` tree as one Pages artifact. Its
-approximately 104 MiB total is below GitHub Pages' 1 GB published-site limit;
-the generated files bypass the 50 MiB regular-Git warning because they are
-artifact content, not commits.
-
-See GitHub's official documentation for
-[selecting a Pages publishing source](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
-and [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+The [Pages workflow](../../../.github/workflows/pages.yml) uploads
+`out/pages_site` as an artifact. Its approximately 104 MiB total is below the
+[1 GB Pages limit](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits),
+and its roughly 54 MB replay files bypass regular-Git size warnings because
+they are generated artifacts, not commits.
 
 Return to the [G1 implementation](../README.md).
