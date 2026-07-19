@@ -4,7 +4,7 @@ channels:
 dependencies:
   - python=3.12
   - pinocchio>=3.2
-  - boost
+  - libboost-devel
   - eigen
   - pybind11
   - cmake>=3.16
