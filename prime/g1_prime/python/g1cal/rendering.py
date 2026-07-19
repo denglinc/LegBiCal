@@ -25,7 +25,6 @@ from .gt_clips import load_gt_clip
 from .loss import trajectory_loss_arrays
 from .paths import project_root, resolve_inside_root
 from .visualization.meshcat_system import record_meshcat_html
-from .visualization.mujoco_renderer import replay_interactive
 from .visualization.recording import (
     sampled_playback_fps,
     sampled_transition_indices,
@@ -154,6 +153,8 @@ def replay_clip(
     realtime_factor: float = 1.0,
 ) -> None:
     """Interactive MuJoCo viewer replay (kinematic; qpos/qvel + mj_forward)."""
+    from .visualization.mujoco_renderer import replay_interactive
+
     sequence, _ = build_sequence(
         clip, result_dir=result_dir, style_config=style_config
     )
