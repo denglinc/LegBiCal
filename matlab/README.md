@@ -1,20 +1,18 @@
 # MATLAB implementation
 
-This implementation combines a stage-structured Fatrop full-information
-estimator with an adjoint KKT gradient. SQP--BFGS, Frank--Wolfe, and projected
-Adam are interchangeable upper-level updates for covariance and kinematic
-calibration.
+A stage-structured Fatrop full-information estimator with an adjoint KKT
+gradient. SQP--BFGS, Frank--Wolfe, and projected Adam share the same covariance
+and kinematic calibration problem.
 
 ## Contents
 
 | Path | Responsibility |
 |---|---|
-| [`+legbical/`](+legbical/) | MATLAB package containing calibration, configuration, and estimation code |
+| [`+legbical/`](+legbical/README.md) | Calibration, estimator, KKT, and configuration package |
 | [`assets/`](assets/) | Paper figures generated from the experiments |
-| [`data/`](data/) | STRIDE example signals and precomputed kinematic quantities |
-| [`tests/`](tests/) | Fast-FIE regression test |
-| [`run_calibration.m`](run_calibration.m) | Calibration entry point |
-| [`setup.m`](setup.m) | Local MATLAB path setup |
+| [`data/`](data/) | STRIDE signals and precomputed kinematic quantities |
+| [`run_calibration.m`](run_calibration.m) | Public calibration entry point |
+| [`setup.m`](setup.m) | Local MATLAB and CasADi path setup |
 
 ## Run
 
@@ -23,17 +21,10 @@ MATLAB, Optimization Toolbox, and a CasADi build with Fatrop are required. Set
 
 ```matlab
 cd matlab
-result = run_calibration(Method="sqp", Horizon="demo");
+calibration = run_calibration(Method="sqp", Horizon="demo");
 ```
 
 `Method` also accepts `"frank-wolfe"` and `"adam"`; `Horizon="full"` uses the
 complete stored trajectory.
-
-## Test
-
-```matlab
-addpath('tests');
-test_fast_fie
-```
 
 Return to the [repository overview](../README.md).

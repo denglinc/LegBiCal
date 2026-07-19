@@ -64,12 +64,14 @@ for clip in ("run1", "run2"):
 summary = json.loads((root / "data/calibrated/calibration_summary.json").read_text())
 assert summary["schema"] == "g1cal_calibration_summary_v1"
 landing_text = (root / "docs/index.html").read_text()
-assert "<title>G1 PRIME after covariance calibration</title>" in landing_text
+assert "<title>0.5x example segment visualization</title>" in landing_text
 assert landing_text.count("<iframe") == 1
 assert 'id="viewer-frame"' in landing_text
-assert landing_text.count('data-src="media/run1_calibrated.html') == 2
-assert landing_text.count('data-src="media/run2_calibrated.html') == 2
-assert "at most one is kept in this page at a time" in landing_text
+assert 'src="media/run1_calibrated.html"' in landing_text
+assert landing_text.count("Load 0.5x") == 2
+assert landing_text.count("Load 1x") == 2
+assert 'mixer.addEventListener("finished", advance)' in landing_text
+assert "loadSegment((segmentIndex + 1) % segments.length, playbackRate)" in landing_text
 for clip in ("run1", "run2"):
     interactive = root / "out/verify_pages/media" / f"{clip}_calibrated.html"
     assert 1_000_000 < interactive.stat().st_size < 100_000_000

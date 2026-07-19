@@ -1,39 +1,34 @@
 # Python implementation
 
-This hardware-oriented B1 implementation uses a stage-structured Fatrop FIE,
-a sparse adjoint, and a semidefinite Frank--Wolfe oracle to calibrate
-covariance and kinematic parameters.
+A hardware-oriented B1 implementation using a stage-structured Fatrop FIE, a
+sparse adjoint, and a semidefinite Frank--Wolfe oracle for covariance and
+kinematic calibration.
 
 ## Contents
 
 | Path | Responsibility |
 |---|---|
-| [`bilevel/`](bilevel/) | Estimator, sensitivity, calibration, robot, data, and generated-code modules |
-| [`tests/`](tests/) | Optimization and integration tests |
+| [`bilevel/`](bilevel/README.md) | Data, robot kinematics, estimator, sensitivity, loss, oracle, and calibration loop |
 | [`tools/`](tools/) | Maintainer utility for regenerating portable kinematic C code |
 
 The repository-root [`pyproject.toml`](../pyproject.toml) owns this package and
 the `estimation-calibration` command. Data, URDF, and portable generated C
-sources are packaged under `bilevel/resources/`; native kinematic functions
-are compiled once into the user cache.
+sources live under `bilevel/resources/`; native functions compile once into
+the user cache.
 
 ## Run
+
+From the repository root:
 
 ```bash
 conda create -n legbical -c conda-forge python=3.12 pinocchio casadi
 conda activate legbical
-python -m pip install -e '.[dev]'
+python -m pip install -e .
 estimation-calibration --horizon 3000 --iterations 75
 ```
 
 CasADi must provide the Fatrop plugin. CLARABEL is the default open-source
-linear minimization oracle; select another installed CVXPY solver with
-`--lmo-solver`.
-
-## Test
-
-```bash
-pytest python/tests
-```
+linear minimization oracle; another installed CVXPY solver can be selected
+with `--lmo-solver`.
 
 Return to the [repository overview](../README.md).

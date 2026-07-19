@@ -3,87 +3,55 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>G1 PRIME after covariance calibration</title>
+  <title>0.5x example segment visualization</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
     body { margin: 0; background: #0d1520; color: #edf4fb; }
-    main { width: min(1120px, calc(100% - 32px)); margin: 40px auto 80px; }
-    h1 { font-size: clamp(2rem, 5vw, 3.6rem); margin-bottom: .35rem; }
-    h2 { margin-top: 0; }
-    .lead { color: #aebfce; max-width: 820px; line-height: 1.6; }
-    .run-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 42px; }
-    section { padding: 20px; background: #162331; border: 1px solid #2b4053; border-radius: 14px; }
-    section p { color: #b7c8d6; line-height: 1.55; }
+    main { width: min(1120px, calc(100% - 32px)); margin: 32px auto 72px; }
+    h1 { margin: 0 0 20px; font-size: clamp(1.25rem, 3vw, 2rem); font-weight: 650; }
+    h2 { margin: 0 0 12px; font-size: 1rem; text-transform: lowercase; }
+    .segment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .segment { padding: 14px; background: #162331; border: 1px solid #2b4053; border-radius: 10px; }
+    .segment.active { border-color: #009e73; }
     .controls { display: flex; flex-wrap: wrap; gap: 8px; }
-    button { border: 0; border-radius: 8px; padding: 11px 16px; background: #009e73; color: white; font-weight: 700; cursor: pointer; }
-    button.secondary { background: #376f91; }
-    button.quiet { background: #344454; }
+    button { border: 0; border-radius: 7px; padding: 9px 13px; background: #344454; color: white; font-weight: 650; cursor: pointer; }
+    button[aria-pressed="true"] { background: #009e73; }
     button:hover, button:focus-visible { filter: brightness(1.13); }
-    .direct-links { margin: 14px 0 0; font-size: .94rem; }
-    code { color: #f2cf68; }
-    #viewer-panel { margin-top: 22px; }
-    #viewer-panel[hidden] { display: none; }
-    .viewer-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    iframe { width: 100%; height: 70vh; min-height: 520px; border: 0; border-radius: 8px; margin-top: 12px; background: #000; }
-    footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #2b4053; color: #aebfce; line-height: 1.6; }
+    .viewer { margin-top: 12px; padding: 0; overflow: hidden; background: #000; border: 1px solid #2b4053; border-radius: 10px; }
+    iframe { display: block; width: 100%; height: 74vh; min-height: 540px; border: 0; background: #000; }
+    footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid #2b4053; color: #aebfce; line-height: 1.6; }
     a { color: #56b4e9; }
     @media (max-width: 760px) {
-      .run-grid { grid-template-columns: 1fr; }
-      .controls button { width: 100%; }
-      .viewer-heading { align-items: flex-start; flex-direction: column; }
-      iframe { min-height: 420px; }
+      .segment-grid { grid-template-columns: 1fr; }
+      .controls button { flex: 1; }
+      iframe { min-height: 430px; }
     }
   </style>
 </head>
 <body>
 <main>
-  <h1>G1 PRIME after covariance calibration</h1>
-  <p class="lead">Final calibrated results for two 501-state running clips.
-    Meshcat replays open at 0.5x so contact forces remain easy to inspect;
-    select 1x for normal-speed playback. Each replay is loaded only when
-    requested, and at most one is kept in this page at a time.</p>
+  <h1>0.5x · 20 s example segment visualization</h1>
 
-  <div class="run-grid">
-    <section id="run1">
-      <h2>run1</h2>
-      <p>Visualization built on top of PRIME's excellent estimator
-        (well-robotics/PRIME, BSD-3). For the local MuJoCo passive viewer, run
-        <code>g1cal replay --clip run1</code>.</p>
+  <div class="segment-grid">
+    <section class="segment active" data-segment-card="0">
+      <h2>segment 1</h2>
       <div class="controls">
-        <button data-src="media/run1_calibrated.html" data-label="run1 at 0.5x">Load 0.5x (default)</button>
-        <button class="secondary" data-src="media/run1_calibrated.html?speed=1" data-label="run1 at 1x">Load 1x</button>
+        <button data-segment="0" data-rate="0.5" aria-pressed="true">Load 0.5x</button>
+        <button data-segment="0" data-rate="1" aria-pressed="false">Load 1x</button>
       </div>
-      <p class="direct-links">Open directly:
-        <a href="media/run1_calibrated.html" target="_blank" rel="noopener">0.5x</a>
-        · <a href="media/run1_calibrated.html?speed=1" target="_blank" rel="noopener">1x</a>
-      </p>
     </section>
 
-    <section id="run2">
-      <h2>run2</h2>
-      <p>Visualization built on top of PRIME's excellent estimator
-        (well-robotics/PRIME, BSD-3). For the local MuJoCo passive viewer, run
-        <code>g1cal replay --clip run2</code>.</p>
+    <section class="segment" data-segment-card="1">
+      <h2>segment 2</h2>
       <div class="controls">
-        <button data-src="media/run2_calibrated.html" data-label="run2 at 0.5x">Load 0.5x (default)</button>
-        <button class="secondary" data-src="media/run2_calibrated.html?speed=1" data-label="run2 at 1x">Load 1x</button>
+        <button data-segment="1" data-rate="0.5" aria-pressed="false">Load 0.5x</button>
+        <button data-segment="1" data-rate="1" aria-pressed="false">Load 1x</button>
       </div>
-      <p class="direct-links">Open directly:
-        <a href="media/run2_calibrated.html" target="_blank" rel="noopener">0.5x</a>
-        · <a href="media/run2_calibrated.html?speed=1" target="_blank" rel="noopener">1x</a>
-      </p>
     </section>
   </div>
 
-  <section id="viewer-panel" hidden>
-    <div class="viewer-heading">
-      <div>
-        <h2 id="viewer-title">Interactive Meshcat replay</h2>
-        <p id="viewer-status" role="status">Loading…</p>
-      </div>
-      <button class="quiet" id="unload-viewer" type="button">Unload viewer</button>
-    </div>
-    <iframe id="viewer-frame" src="about:blank" title="Interactive Meshcat replay" allowfullscreen></iframe>
+  <section class="viewer">
+    <iframe id="viewer-frame" src="media/run1_calibrated.html" title="segment 1 at 0.5x" allowfullscreen></iframe>
   </section>
 
   <footer>
@@ -96,33 +64,86 @@
   </footer>
 </main>
 <script>
-  const panel = document.querySelector("#viewer-panel");
+  const segments = [
+    { label: "segment 1", source: "media/run1_calibrated.html" },
+    { label: "segment 2", source: "media/run2_calibrated.html" },
+  ];
   const frame = document.querySelector("#viewer-frame");
-  const title = document.querySelector("#viewer-title");
-  const status = document.querySelector("#viewer-status");
+  let segmentIndex = 0;
+  let playbackRate = 0.5;
+  let generation = 0;
+  let readyTimer = null;
+  let fallbackTimer = null;
 
-  document.querySelectorAll("button[data-src]").forEach((button) => {
+  function sourceFor(segment, rate) {
+    return segments[segment].source + (rate === 1 ? "?speed=1" : "");
+  }
+
+  function updateSelection() {
+    document.querySelectorAll("[data-segment-card]").forEach((card) => {
+      card.classList.toggle("active", Number(card.dataset.segmentCard) === segmentIndex);
+    });
+    document.querySelectorAll("button[data-segment][data-rate]").forEach((button) => {
+      const selected = Number(button.dataset.segment) === segmentIndex &&
+        Number(button.dataset.rate) === playbackRate;
+      button.setAttribute("aria-pressed", String(selected));
+    });
+  }
+
+  function loadSegment(nextSegment, nextRate, scrollToViewer = false) {
+    generation += 1;
+    window.clearTimeout(readyTimer);
+    window.clearTimeout(fallbackTimer);
+    segmentIndex = nextSegment;
+    playbackRate = nextRate;
+    updateSelection();
+    frame.title = `${segments[segmentIndex].label} at ${playbackRate}x`;
+    frame.src = sourceFor(segmentIndex, playbackRate);
+    if (scrollToViewer) {
+      frame.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function connectAutoAdvance(expectedGeneration) {
+    let attempts = 0;
+    function connect() {
+      if (expectedGeneration !== generation) return;
+      const childViewer = frame.contentWindow && frame.contentWindow.viewer;
+      const animator = childViewer && childViewer.animator;
+      const mixer = animator && animator.mixer;
+      if (!mixer || !(animator.duration > 0)) {
+        attempts += 1;
+        if (attempts < 600) readyTimer = window.setTimeout(connect, 50);
+        return;
+      }
+
+      let advanced = false;
+      function advance() {
+        if (advanced || expectedGeneration !== generation) return;
+        advanced = true;
+        window.clearTimeout(fallbackTimer);
+        loadSegment((segmentIndex + 1) % segments.length, playbackRate);
+      }
+
+      mixer.addEventListener("finished", advance);
+      const expectedMilliseconds = animator.duration * 1000 / playbackRate;
+      fallbackTimer = window.setTimeout(advance, Math.ceil(expectedMilliseconds) + 1500);
+    }
+    connect();
+  }
+
+  document.querySelectorAll("button[data-segment][data-rate]").forEach((button) => {
     button.addEventListener("click", () => {
-      frame.src = button.dataset.src;
-      frame.title = `Interactive Meshcat replay: ${button.dataset.label}`;
-      title.textContent = button.dataset.label;
-      status.textContent = "Loading the self-contained replay…";
-      panel.hidden = false;
-      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      loadSegment(
+        Number(button.dataset.segment),
+        Number(button.dataset.rate),
+        true,
+      );
     });
   });
 
-  frame.addEventListener("load", () => {
-    if (frame.src !== "about:blank") {
-      status.textContent = "Replay loaded. Use the in-viewer 0.5x / 1x controls at any time.";
-    }
-  });
-
-  document.querySelector("#unload-viewer").addEventListener("click", () => {
-    frame.src = "about:blank";
-    frame.title = "Interactive Meshcat replay";
-    panel.hidden = true;
-  });
+  frame.addEventListener("load", () => connectAutoAdvance(generation));
+  updateSelection();
 </script>
 </body>
 </html>

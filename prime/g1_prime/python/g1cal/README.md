@@ -20,7 +20,7 @@ rendering inputs.
 | [`visualization/`](visualization/README.md) | Full Drake/pydrake visualization graph and backend implementations |
 
 The supported user interface is the `g1cal` CLI documented in the
-[implementation README](../../README.md). Modules remain importable for tests
-and advanced orchestration.
+[implementation README](../../README.md). Modules remain importable for
+advanced orchestration.
 
 Return to the [Python package source](../README.md).

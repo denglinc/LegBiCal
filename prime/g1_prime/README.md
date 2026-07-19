@@ -5,7 +5,7 @@ estimator. The lower problem is a fixed-inertia PRIME FDDP estimate with
 smoothed second-order-cone contact Newton solves; the upper problem minimizes a
 fixed SE(3)-log trajectory loss with SQP--BFGS or Frank--Wolfe--SDP.
 
-[Open G1 PRIME after covariance calibration](https://dlinc3.github.io/LegBiCal/)
+[Open the calibrated G1 visualization](https://dlinc3.github.io/LegBiCal/)
 on GitHub Pages.
 
 | Calibrated clip | Default replay | Normal speed | Local MuJoCo viewer |
@@ -19,22 +19,8 @@ remain easy to inspect; each page also has `0.5x` and `1x` controls.
 
 The covariance was calibrated by directly minimizing the SE(3)-log trajectory
 loss on the two released 501-state running clips; no accuracy beyond these two
-clips is claimed.
-
-## Results
-
-Only the joint-position measurement block is released in the upper problem;
-the other 16 covariance coordinates remain at the declared baseline.
-
-| Quantity | Initial | Calibrated |
-|---|---:|---:|
-| Aggregate SE(3)-log loss | 0.013567787042 | **0.013564704612** |
-| run1 loss | 0.011790493739 | **0.011788640734** |
-| run2 loss | 0.015345080346 | **0.015340768489** |
-| Joint-position sigma | 0.040000020 rad | **0.039944588 rad** |
-
-The released coordinate is `theta[13] = 1.3849080667587708`, corresponding
-to variance `0.0015955701021633114` and precision `626.7352331584658`.
+clips is claimed. The released upper problem varies the joint-position
+measurement block while keeping the remaining covariance coordinates fixed.
 
 ## Quickstart
 
@@ -69,13 +55,12 @@ g1cal replay --clip run1 --source calibrated
 | Directory | Responsibility |
 |---|---|
 | [`configs/`](configs/README.md) | Lower-solver, replay-scene, and visualization configuration |
-| [`cpp/`](cpp/README.md) | PRIME overlay, lower-solver executable, pybind module, and native tests |
+| [`cpp/`](cpp/README.md) | PRIME overlay, lower-solver executable, pybind module, and contact model |
 | [`data/`](data/README.md) | Released clips, calibrated covariance, and reference solutions |
 | [`docs/`](docs/README.md) | GitHub Pages landing page and deployment instructions |
 | [`models/`](models/README.md) | Pinned G1 URDF, MJCF, meshes, contact frames, and manifest |
 | [`python/`](python/README.md) | Installable `g1cal` package and complete Drake visualization architecture |
-| [`scripts/`](scripts/) | Build, Pages generation, and release verification entry points |
-| [`tests/`](tests/) | Python unit and integration tests |
+| [`scripts/`](scripts/) | Build, Pages generation, and release-maintenance entry points |
 | [`third_party/`](third_party/) | Pinned PRIME source and preserved notices |
 
 ## Calibration architecture
@@ -137,19 +122,6 @@ g1cal select --out out/calibration
 
 The Frank--Wolfe linear minimization oracle is solved as an SDP and checked
 against the analytic interval endpoint for the released isotropic scalar.
-
-## Verification
-
-```bash
-scripts/verify_release.sh
-```
-
-This builds the native targets, runs six C++ tests and the Python suite,
-validates data and scenes, performs a render smoke, builds the Pages artifact,
-and checks repository file sizes. `scripts/verify_release.sh --full` also runs
-both lower solves and one iteration of each upper method. Until the motion-data
-publication marker records authorization, technical verification intentionally
-finishes with status `3`; see [`data/clips/README.md`](data/clips/README.md).
 
 ## Acknowledgments and licenses
 

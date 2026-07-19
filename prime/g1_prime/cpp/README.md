@@ -10,14 +10,12 @@ The parent superbuild compiles PRIME first and then this overlay.
 | [`apps/`](apps/) | `g1_motion_fie` lower-solver command-line executable |
 | [`bindings/`](bindings/) | `_g1cal_cpp` in-process pybind entry point |
 | [`include/g1cal/`](include/g1cal/) | Motion actions, problem assembly, covariance precision, simulation, preprocessing, and contact profiles |
-| [`tests/`](tests/) | Six native parity, derivative, dimension, inertia, and covariance tests |
 | [`CMakeLists.txt`](CMakeLists.txt) | Overlay targets and PRIME linkage |
 
 Build from the implementation root:
 
 ```bash
 ./scripts/build.sh
-ctest --test-dir build/overlay --output-on-failure
 ```
 
 The executable and pybind module compile the same estimator translation unit,

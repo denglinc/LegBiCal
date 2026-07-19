@@ -1,14 +1,14 @@
 # G1 GitHub Pages
 
-Source landing page for **G1 PRIME after covariance calibration**. The two
-self-contained Meshcat replays are generated from the shipped calibrated
-solutions and are not stored in Git history.
+Source landing page for the calibrated G1 Meshcat segments. The two
+self-contained replays are generated from the shipped solutions and are not
+stored in Git history.
 
 ## Contents
 
 | Path | Responsibility |
 |---|---|
-| [`index.html`](index.html) | Lightweight landing page with one on-demand viewer and direct replay links |
+| [`index.html`](index.html) | One auto-starting viewer with compact segment and speed selectors |
 
 ## Build locally
 
@@ -19,9 +19,11 @@ python scripts/publish_pages.py
 ```
 
 This creates `out/pages_site/` with the landing page and
-`media/run{1,2}_calibrated.html`. Each replay is approximately 54 MB, defaults
-to `0.5x`, and accepts `?speed=1`. The landing page keeps at most one replay
-loaded at a time; direct links open a replay independently.
+`media/run{1,2}_calibrated.html`. The landing page immediately starts segment 1
+at `0.5x`, loads segment 2 when its animation finishes, and loops. The two
+compact selectors can restart either segment at `0.5x` or `1x`; the selected
+rate continues across the loop. Only one self-contained replay is resident in
+the iframe at a time.
 
 ## GitHub Pages setting
 

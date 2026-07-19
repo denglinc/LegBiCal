@@ -8,10 +8,9 @@ Python computes the upper loss, sensitivity, and parameter update.
 
 | Path | Responsibility |
 |---|---|
-| [`native/`](native/) | C++ PRIME full-information estimator executable |
+| [`native/`](native/README.md) | C++ PRIME full-information estimator executable |
 | [`stride_prime/`](stride_prime/README.md) | Python estimator boundary, sensitivity, and optimizers |
 | [`model/`](model/) | Planar STRIDE URDF used by the estimator |
-| [`tests/`](tests/) | Short native/Python integration test |
 | [`vendor/PRIME/`](vendor/PRIME/) | Compact pinned PRIME/Crocoddyl source subset |
 | [`run_calibration.py`](run_calibration.py) | Command-line calibration entry point |
 
@@ -29,12 +28,6 @@ python run_calibration.py --method sqp --iterations 10 --knots 80
 
 `--method` accepts `sqp`, `frank-wolfe`, and `adam`. Use `--data PATH` for a
 compatible MAT file and `--knots` to select the estimator horizon.
-
-## Test
-
-```bash
-pytest -q tests/test_prime_fie.py
-```
 
 The vendored source is derived from
 [well-robotics/PRIME](https://github.com/well-robotics/PRIME) commit
