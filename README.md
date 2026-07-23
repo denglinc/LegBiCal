@@ -4,7 +4,7 @@ Reference implementations for *Simultaneous Calibration of Noise Covariance
 and Kinematics for State Estimation of Legged Robots via Bi-level
 Optimization* ([arXiv:2510.11539](https://arxiv.org/abs/2510.11539)).
 
-[Explore the calibrated G1 PRIME visualization](https://dlinc3.github.io/LegBiCal/).
+[Explore the calibrated G1 PRIME visualization](https://denglinc.github.io/LegBiCal/).
 
 ## Implementations
 

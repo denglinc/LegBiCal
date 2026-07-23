@@ -9,7 +9,7 @@ authors:
     given-names: Jiarong
   - family-names: Xiong
     given-names: Xiaobin
-repository-code: "https://github.com/DLinC3/LegBiCal"
+repository-code: "https://github.com/denglinc/LegBiCal"
 preferred-citation:
   type: article
   title: "Simultaneous Calibration of Noise Covariance and Kinematics for State Estimation of Legged Robots via Bi-level Optimization"

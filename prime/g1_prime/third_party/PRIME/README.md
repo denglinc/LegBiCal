@@ -276,7 +276,7 @@ The example weights are rough manual tunings chosen to demonstrate the method
 on the provided logs; they are not claimed to be optimal. Automatic or
 calibrated gain selection is a useful next step. One related direction is our
 recent ICRA 2026 work,
-[DLinC3/LegBiCal](https://github.com/DLinC3/LegBiCal)
+[denglinc/LegBiCal](https://github.com/denglinc/LegBiCal)
 ([arXiv:2510.11539](https://arxiv.org/abs/2510.11539)), although PRIME's
 contact-implicit dynamics can introduce additional coupling beyond the
 calibration cases studied there.

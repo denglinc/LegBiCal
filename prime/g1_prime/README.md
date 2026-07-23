@@ -4,12 +4,12 @@ Reproducible bilevel covariance calibration for the Unitree G1. PRIME FDDP and
 contact Newton solves form the lower problem; SQP--BFGS or Frank--Wolfe--SDP
 minimizes the upper SE(3)-log trajectory loss.
 
-[Open the calibrated G1 visualization](https://dlinc3.github.io/LegBiCal/).
+[Open the calibrated G1 visualization](https://denglinc.github.io/LegBiCal/).
 
 | Clip | Meshcat 0.5x | Meshcat 1x | MuJoCo |
 |---|---|---|---|
-| run1 | [Open](https://dlinc3.github.io/LegBiCal/media/run1_calibrated.html) | [Open](https://dlinc3.github.io/LegBiCal/media/run1_calibrated.html?speed=1) | `g1cal replay --clip run1` |
-| run2 | [Open](https://dlinc3.github.io/LegBiCal/media/run2_calibrated.html) | [Open](https://dlinc3.github.io/LegBiCal/media/run2_calibrated.html?speed=1) | `g1cal replay --clip run2` |
+| run1 | [Open](https://denglinc.github.io/LegBiCal/media/run1_calibrated.html) | [Open](https://denglinc.github.io/LegBiCal/media/run1_calibrated.html?speed=1) | `g1cal replay --clip run1` |
+| run2 | [Open](https://denglinc.github.io/LegBiCal/media/run2_calibrated.html) | [Open](https://denglinc.github.io/LegBiCal/media/run2_calibrated.html?speed=1) | `g1cal replay --clip run2` |
 
 Meshcat defaults to `0.5x`. Visualizations are built on top of PRIME's
 excellent estimator (well-robotics/PRIME, BSD-3).
